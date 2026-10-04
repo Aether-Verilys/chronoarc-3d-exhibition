@@ -54,7 +54,7 @@ const ARCHETYPES: ArchetypeTemplate[] = [
   { category: 'Quantum Flow', nameCn: '莫比乌斯环', nameEn: 'Mobius Rings', color: '#4f46e5', emissiveColor: '#818cf8' }
 ];
 
-export const ROW_BASE_N = 7;
+export const ROW_BASE_N = 5;
 const ROW_STEP = 2;
 
 export function countForRow(index: number, totalRows: number, step = 2) {

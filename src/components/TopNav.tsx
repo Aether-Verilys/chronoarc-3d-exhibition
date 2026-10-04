@@ -32,7 +32,7 @@ export const TopNav: React.FC<TopNavProps> = ({
     }
   };
 
-  const presets: CameraPreset[] = ['arc-wide', 'hero-low', 'stadium-overview', 'center-focus', 'orbit-roam'];
+  const presets: CameraPreset[] = ['front', 'low-angle', 'close-up'];
 
   return (
     <header className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between px-6 py-3.5 border-b border-slate-200/80 bg-white/85 backdrop-blur-md shadow-xs">
@@ -40,9 +40,6 @@ export const TopNav: React.FC<TopNavProps> = ({
       <div className="flex items-center gap-3">
         <span className="font-display text-xl font-bold tracking-tight text-slate-900">
           ChronoArc
-        </span>
-        <span className="text-xs text-slate-500 font-mono tracking-wider hidden sm:inline">
-          3D SPATIAL · 5排曲面矩阵 {modelCount}模型
         </span>
       </div>
 
@@ -60,7 +57,6 @@ export const TopNav: React.FC<TopNavProps> = ({
               }`}
             >
               <span>{cfg.labelCn}</span>
-              <span className="text-slate-400 ml-1.5 hidden xl:inline">({cfg.label})</span>
               {isActive && (
                 <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-600 rounded-full" />
               )}

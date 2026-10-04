@@ -6,7 +6,7 @@ import { TopNav } from './components/TopNav';
 import { ArrayToolbar } from './components/ArrayToolbar';
 import { OpticsControls } from './components/OpticsControls';
 import { soundEffects } from './audio/soundEffects';
-import { Move, Sparkles } from 'lucide-react';
+import { Move, Sparkles, ArrowLeft } from 'lucide-react';
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -14,7 +14,7 @@ export default function App() {
 
   const [models, setModels] = useState<ModelDefinition[]>(MODEL_CATALOG);
   const [activeModel, setActiveModel] = useState<ModelDefinition>(MODEL_CATALOG[47] || MODEL_CATALOG[0]);
-  const [currentPreset, setCurrentPreset] = useState<CameraPreset>('arc-wide');
+  const [currentPreset, setCurrentPreset] = useState<CameraPreset>('front');
   const [isOpticsOpen, setIsOpticsOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [arcRadius, setArcRadius] = useState(10);
@@ -30,6 +30,7 @@ export default function App() {
   const [isDraggingModel, setIsDraggingModel] = useState(false);
   const [draggedModelName, setDraggedModelName] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isModelFocused, setIsModelFocused] = useState(false);
 
   const [optics, setOptics] = useState<OpticsSettings>({
     stretchX: 1.35,
@@ -47,6 +48,8 @@ export default function App() {
     const manager = new SceneManager(containerRef.current);
     sceneManagerRef.current = manager;
 
+    manager.onModelFocusChange = (focused) => setIsModelFocused(focused);
+
     manager.onModelSelect = (model: ModelDefinition) => {
       setActiveModel(model);
     };
@@ -61,10 +64,10 @@ export default function App() {
     manager.onModelReorder = (reordered: ModelDefinition[]) => {
       setModels([...reordered]);
       setTiers(manager.getTiers());
-      setToastMessage('模型已重新排布，其他模型已依次滑移让位');
+      setToastMessage('已重排');
       setTimeout(() => {
         setToastMessage(null);
-      }, 2500);
+      }, 1500);
     };
 
     manager.setArcRadius(10);
@@ -148,12 +151,11 @@ export default function App() {
       setModels(sceneManagerRef.current.getModels());
       setTiers(sceneManagerRef.current.getTiers());
       setActiveModel(def);
-      const where = placement.mode === 'new-row' ? '新排' : '指定排';
-      setToastMessage(`已加入${where}：${def.nameCn}`);
-      setTimeout(() => setToastMessage(null), 2500);
+      setToastMessage(`已加入：${def.nameCn}`);
+      setTimeout(() => setToastMessage(null), 1500);
     } catch {
-      setToastMessage('GLB 加载失败，请检查文件');
-      setTimeout(() => setToastMessage(null), 2500);
+      setToastMessage('加载失败');
+      setTimeout(() => setToastMessage(null), 1500);
     }
   };
 
@@ -204,6 +206,12 @@ export default function App() {
       {/* 3D WebGL Canvas */}
       <div ref={containerRef} className="absolute inset-0 z-0 cursor-grab active:cursor-grabbing" />
 
+      {isModelFocused && (
+        <button onClick={() => sceneManagerRef.current?.exitModelFocus()} className="fixed top-20 left-5 z-40 flex items-center gap-2 rounded-xl bg-slate-900/90 px-4 py-2.5 text-sm font-semibold text-white shadow-xl backdrop-blur-md border border-white/20 hover:bg-slate-800 transition-colors">
+          <ArrowLeft className="w-4 h-4" /> 返回全景
+        </button>
+      )}
+
       {/* Top Navigation Bar */}
       <TopNav
         currentPreset={currentPreset}
@@ -243,9 +251,9 @@ export default function App() {
 
       {/* Active iOS Drag Notification Banner */}
       {isDraggingModel && (
-        <div className="fixed top-18 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 px-4 py-2 rounded-full bg-slate-900/90 text-white backdrop-blur-md shadow-2xl border border-white/20 text-xs font-medium pointer-events-none">
+        <div className="fixed top-18 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/90 text-white backdrop-blur-md shadow-2xl border border-white/20 text-xs font-medium pointer-events-none">
           <Move className="w-4 h-4 text-cyan-400 animate-pulse" />
-          <span>正在拖动【{draggedModelName}】· 移动到任意位置，其他模型会自动滑移让位</span>
+          <span>拖动中</span>
         </div>
       )}
 
@@ -254,14 +262,6 @@ export default function App() {
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-600 text-white backdrop-blur-md shadow-xl text-xs font-semibold pointer-events-none transition-all">
           <Sparkles className="w-4 h-4 fill-white" />
           <span>{toastMessage}</span>
-        </div>
-      )}
-
-      {/* Subtle Hint in Top Left */}
-      {!isDraggingModel && (
-        <div className="fixed top-18 left-6 z-10 hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/75 backdrop-blur-md border border-slate-200/80 text-[11px] font-mono text-slate-600 shadow-xs pointer-events-none">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-600 animate-pulse" />
-          <span>短按点击弹跳 · 长按抓起模型拖拽，其他模型自动滑开让位</span>
         </div>
       )}
     </div>

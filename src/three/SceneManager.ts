@@ -15,45 +15,29 @@ export interface MatrixSlot {
 }
 
 export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
-  'arc-wide': {
-    id: 'arc-wide',
-    label: 'Full 5-Tier Convex Matrix',
-    labelCn: '五排全景正面',
+  'front': {
+    id: 'front',
+    label: 'Front',
+    labelCn: '正面',
     position: [0, 0.3, 8.6],
     target: [0, 0.0, -1.2],
     fov: 72
   },
-  'hero-low': {
-    id: 'hero-low',
-    label: 'Low-Angle Looking Up',
-    labelCn: '仰角透视',
+  'low-angle': {
+    id: 'low-angle',
+    label: 'Low Angle',
+    labelCn: '仰角',
     position: [0, -3.4, 7.2],
     target: [0, 0.8, -1.2],
     fov: 80
   },
-  'stadium-overview': {
-    id: 'stadium-overview',
-    label: 'High-Angle Looking Down',
-    labelCn: '俯角透视',
-    position: [0, 4.6, 8.0],
-    target: [0, -0.8, -0.5],
-    fov: 74
-  },
-  'center-focus': {
-    id: 'center-focus',
-    label: 'Center Tier Close-Up',
-    labelCn: '中央层聚焦',
+  'close-up': {
+    id: 'close-up',
+    label: 'Close Up',
+    labelCn: '特写',
     position: [0, 0.0, 5.6],
     target: [0, 0.0, 0.0],
     fov: 58
-  },
-  'orbit-roam': {
-    id: 'orbit-roam',
-    label: 'Curved Wing Angle',
-    labelCn: '斜角翼列',
-    position: [2.0, 0.7, 8.4],
-    target: [0, 0.0, -1.2],
-    fov: 66
   }
 };
 
@@ -139,12 +123,17 @@ export class SceneManager {
   private clock = new THREE.Clock();
   private animationFrameId: number | null = null;
   private isDestroyed = false;
+  private isModelFocused = false;
+  private focusedModelIndex: number | null = null;
+  private backdropFocus = 0;
+  private preFocusCamera = { position: new THREE.Vector3(0, 0.3, 8.6), target: new THREE.Vector3(0, 0, -1.2), fov: 72 };
 
   // Callbacks
   public onModelSelect?: (model: ModelDefinition) => void;
   public onModelBounce?: (model: ModelDefinition) => void;
   public onDragModeChange?: (isDragging: boolean, draggedName?: string) => void;
   public onModelReorder?: (reorderedModels: ModelDefinition[]) => void;
+  public onModelFocusChange?: (focused: boolean, model?: ModelDefinition) => void;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -549,11 +538,25 @@ export class SceneManager {
     const dom = this.renderer.domElement;
     dom.addEventListener('pointermove', this.onPointerMove);
     dom.addEventListener('pointerdown', this.onPointerDown);
+    dom.addEventListener('dblclick', this.onDoubleClick);
     dom.addEventListener('pointerup', this.onPointerUp);
     dom.addEventListener('pointercancel', this.onPointerUp);
     dom.addEventListener('wheel', this.onWheel, { passive: false });
     window.addEventListener('resize', this.onResize);
   }
+
+  private onDoubleClick = (e: MouseEvent) => {
+    if (this.isDraggingModel) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const intersects = this.raycaster.intersectObjects(this.models.map(m => m.hitBox), false);
+    if (intersects.length === 0) return;
+    const index = intersects[0].object.userData.modelIndex as number;
+    if (this.isModelFocused && this.focusedModelIndex === index) this.exitModelFocus();
+    else this.focusModel(index);
+  };
 
   private onPointerDown = (e: MouseEvent) => {
     this.isPointerDown = true;
@@ -829,6 +832,37 @@ export class SceneManager {
     }
   }
 
+  public focusModel(index: number) {
+    if (index < 0 || index >= this.models.length) return;
+    if (!this.isModelFocused) {
+      this.preFocusCamera.position.copy(this.targetCamPos);
+      this.preFocusCamera.target.copy(this.targetLookAt);
+      this.preFocusCamera.fov = this.targetFov;
+    }
+    const model = this.models[index];
+    const center = model.rootGroup.position.clone();
+    const offset = this.camera.position.clone().sub(center).normalize();
+    this.targetCamPos.copy(center).add(offset.multiplyScalar(3.2));
+    this.targetLookAt.copy(center);
+    this.targetFov = 55;
+    this.isModelFocused = true;
+    this.focusedModelIndex = index;
+    this.selectModel(index);
+    this.onModelFocusChange?.(true, model.definition);
+  }
+
+  public exitModelFocus() {
+    if (!this.isModelFocused) return;
+    this.targetCamPos.copy(this.preFocusCamera.position);
+    this.targetLookAt.copy(this.preFocusCamera.target);
+    this.targetFov = this.preFocusCamera.fov;
+    this.isModelFocused = false;
+    this.focusedModelIndex = null;
+    this.onModelFocusChange?.(false);
+  }
+
+  public get isFocused() { return this.isModelFocused; }
+
   public selectModel(index: number, notify: boolean = true) {
     if (index < 0 || index >= this.models.length) return;
 
@@ -969,6 +1003,17 @@ export class SceneManager {
     // Update Models (smooth lerping to target slots + physics + jiggle)
     this.models.forEach(m => m.update(time, delta));
 
+    // Soften the gallery backdrop while a model is focused. The model remains crisp.
+    const focusTarget = this.isModelFocused ? 1 : 0;
+    this.backdropFocus += (focusTarget - this.backdropFocus) * Math.min(1, delta * 5);
+    const soften = 1 - this.backdropFocus * 0.42;
+    if (this.backdropMat) {
+      this.backdropMat.color.setRGB(soften, soften, soften);
+    }
+    if (this.backdropMatB) {
+      this.backdropMatB.color.setRGB(soften, soften, soften);
+    }
+
     // Update Particles
     this.particles.update(time, delta);
 
@@ -1015,6 +1060,7 @@ export class SceneManager {
     const dom = this.renderer.domElement;
     dom.removeEventListener('pointermove', this.onPointerMove);
     dom.removeEventListener('pointerdown', this.onPointerDown);
+    dom.removeEventListener('dblclick', this.onDoubleClick);
     dom.removeEventListener('pointerup', this.onPointerUp);
     dom.removeEventListener('pointercancel', this.onPointerUp);
     dom.removeEventListener('wheel', this.onWheel);

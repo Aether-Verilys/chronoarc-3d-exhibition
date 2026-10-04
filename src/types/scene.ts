@@ -20,7 +20,7 @@ export interface OpticsSettings {
   enableShader: boolean;  // Toggle shader post-processing
 }
 
-export type CameraPreset = 'arc-wide' | 'hero-low' | 'stadium-overview' | 'center-focus' | 'orbit-roam';
+export type CameraPreset = 'front' | 'low-angle' | 'close-up';
 
 export type GlbPlacement = { mode: 'new-row' } | { mode: 'existing'; rowId: string };
 
@@ -46,7 +46,7 @@ export interface BackdropTheme {
 }
 
 export const BACKDROP_THEMES: BackdropTheme[] = [
-  { id: 'daylight', label: '日光', path: '/backdrops/daylight.jpeg' },
-  { id: 'neon-dark', label: '暗夜霓虹', path: '/backdrops/neon-dark.jpeg' },
-  { id: 'warm-sunset', label: '暖橘', path: '/backdrops/warm-sunset.jpeg' },
+  { id: 'daylight', label: '场景 1', path: '/backdrops/daylight.jpeg' },
+  { id: 'neon-dark', label: '场景 2', path: '/backdrops/neon-dark.jpeg' },
+  { id: 'warm-sunset', label: '场景 3', path: '/backdrops/warm-sunset.jpeg' },
 ];
