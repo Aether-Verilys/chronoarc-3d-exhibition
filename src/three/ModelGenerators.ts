@@ -54,32 +54,70 @@ const ARCHETYPES: ArchetypeTemplate[] = [
   { category: 'Quantum Flow', nameCn: '莫比乌斯环', nameEn: 'Mobius Rings', color: '#4f46e5', emissiveColor: '#818cf8' }
 ];
 
-// 5 Vertical Tiers: Center tier has 17 models, tapering to 13 and 9 on the edges
-export const TIER_CONFIGS = [
-  { tier: 0, nameCn: '顶层', nameEn: 'Top Tier', y: 4.2, count: 9, spanAngle: Math.PI * 0.58 },
-  { tier: 1, nameCn: '次顶层', nameEn: 'Upper-Mid Tier', y: 2.1, count: 13, spanAngle: Math.PI * 0.68 },
-  { tier: 2, nameCn: '中央层', nameEn: 'Center Tier', y: 0.0, count: 17, spanAngle: Math.PI * 0.78 },
-  { tier: 3, nameCn: '次底层', nameEn: 'Lower-Mid Tier', y: -2.1, count: 13, spanAngle: Math.PI * 0.68 },
-  { tier: 4, nameCn: '底层', nameEn: 'Bottom Tier', y: -4.2, count: 9, spanAngle: Math.PI * 0.58 }
+export const ROW_BASE_N = 7;
+const ROW_STEP = 2;
+
+export function countForRow(index: number, totalRows: number, step = 2) {
+  const center = (totalRows - 1) / 2;
+  const distFromCenter = Math.abs(index - center);
+  const steps = Math.round(center - distFromCenter);
+  return ROW_BASE_N + steps * step;
+}
+
+export function spanAngleForCount(count: number) {
+  return Math.PI * (0.58 + (count - ROW_BASE_N) * 0.025);
+}
+
+const TIER_NAMES = [
+  { nameCn: '顶层', nameEn: 'Top Tier' },
+  { nameCn: '次顶层', nameEn: 'Upper-High Tier' },
+  { nameCn: '中上层', nameEn: 'Upper-Mid Tier' },
+  { nameCn: '次上层', nameEn: 'Upper Tier' },
+  { nameCn: '中央层', nameEn: 'Center Tier' },
+  { nameCn: '次下层', nameEn: 'Lower Tier' },
+  { nameCn: '中下层', nameEn: 'Lower-Mid Tier' },
+  { nameCn: '次底层', nameEn: 'Lower-Low Tier' },
+  { nameCn: '底层', nameEn: 'Bottom Tier' }
 ];
+
+export const TIER_CONFIGS = TIER_NAMES.map((name, i) => {
+  const count = countForRow(i, TIER_NAMES.length);
+  return {
+    tier: i,
+    nameCn: name.nameCn,
+    nameEn: name.nameEn,
+    y: (TIER_NAMES.length - 1) * 1.05 - i * 2.1,
+    count,
+    spanAngle: spanAngleForCount(count)
+  };
+});
+
+export function createCatalogDefinition(
+  tier: number,
+  col: number,
+  index: number,
+  rowNameCn: string
+): ModelDefinition {
+  const arch = ARCHETYPES[(index + col) % ARCHETYPES.length];
+  return {
+    id: `model-t${tier}-c${col}-${index}`,
+    index,
+    tier,
+    col,
+    nameCn: `${rowNameCn} · ${arch.nameCn} ${col + 1}号`,
+    nameEn: `${arch.nameEn} #${index + 1}`,
+    category: arch.category,
+    color: arch.color,
+    emissiveColor: arch.emissiveColor
+  };
+}
 
 export const MODEL_CATALOG: ModelDefinition[] = [];
 
 let globalIndex = 0;
 TIER_CONFIGS.forEach(tierCfg => {
   for (let c = 0; c < tierCfg.count; c++) {
-    const arch = ARCHETYPES[(globalIndex + c) % ARCHETYPES.length];
-    MODEL_CATALOG.push({
-      id: `model-t${tierCfg.tier}-c${c}-${globalIndex}`,
-      index: globalIndex,
-      tier: tierCfg.tier,
-      col: c,
-      nameCn: `${tierCfg.nameCn} · ${arch.nameCn} ${c + 1}号`,
-      nameEn: `${arch.nameEn} #${globalIndex + 1}`,
-      category: arch.category,
-      color: arch.color,
-      emissiveColor: arch.emissiveColor
-    });
+    MODEL_CATALOG.push(createCatalogDefinition(tierCfg.tier, c, globalIndex, tierCfg.nameCn));
     globalIndex++;
   }
 });
@@ -493,8 +531,8 @@ export function createModelWrapper(
   const contentGroup = modelResult.content;
   rootGroup.add(contentGroup);
 
-  // Invisible Hitbox for raycasting
-  const hitBoxGeo = new THREE.SphereGeometry(1.0, 12, 12);
+  // Invisible Hitbox for raycasting — generous size so edge models are easy to grab
+  const hitBoxGeo = new THREE.SphereGeometry(1.6, 8, 8);
   const hitBoxMat = new THREE.MeshBasicMaterial({ visible: false });
   const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
   hitBox.userData = { modelId: definition.id, modelIndex: definition.index };
@@ -527,6 +565,7 @@ export function createModelWrapper(
   let isDragging = false;
   let isSwapCandidate = false;
   let isJiggling = false;
+  let lerpSpeed = 0.6; // Start very slow for entrance animation
 
   const triggerBounce = (force: number = 8.5) => {
     if (isDragging) return;
@@ -579,10 +618,12 @@ export function createModelWrapper(
 
     // If not actively dragged by cursor, smoothly spring-lerp to targetSlotPos
     if (!isDragging) {
-      rootGroup.position.lerp(targetPos, 14.0 * delta);
-      // Smoothly slerp rotation towards target rotation
-      rootGroup.rotation.x += (targetRot.x - rootGroup.rotation.x) * (14.0 * delta);
-      rootGroup.rotation.y += (targetRot.y - rootGroup.rotation.y) * (14.0 * delta);
+      // Ramp up lerp speed from entrance (1.8) to normal (14.0)
+      if (lerpSpeed < 14.0) lerpSpeed += delta * 3.0;
+      const sp = Math.min(lerpSpeed, 14.0);
+      rootGroup.position.lerp(targetPos, sp * delta);
+      rootGroup.rotation.x += (targetRot.x - rootGroup.rotation.x) * (sp * delta);
+      rootGroup.rotation.y += (targetRot.y - rootGroup.rotation.y) * (sp * delta);
 
       // iOS Jiggle (playful icon wiggle during drag mode)
       if (isJiggling) {

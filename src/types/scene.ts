@@ -38,3 +38,15 @@ export interface CameraViewConfig {
   target: [number, number, number];
   fov: number;
 }
+
+export interface BackdropTheme {
+  id: string;
+  label: string;
+  path: string;
+}
+
+export const BACKDROP_THEMES: BackdropTheme[] = [
+  { id: 'daylight', label: '日光', path: '/backdrops/daylight.jpeg' },
+  { id: 'neon-dark', label: '暗夜霓虹', path: '/backdrops/neon-dark.jpeg' },
+  { id: 'warm-sunset', label: '暖橘', path: '/backdrops/warm-sunset.jpeg' },
+];

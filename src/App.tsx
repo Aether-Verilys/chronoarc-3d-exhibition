@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SceneManager } from './three/SceneManager';
-import { CameraPreset, GlbPlacement, ModelDefinition, OpticsSettings, TierInfo } from './types/scene';
+import { CameraPreset, GlbPlacement, ModelDefinition, OpticsSettings, TierInfo, BACKDROP_THEMES } from './types/scene';
 import { MODEL_CATALOG, TIER_CONFIGS } from './three/ModelGenerators';
 import { TopNav } from './components/TopNav';
 import { ArrayToolbar } from './components/ArrayToolbar';
@@ -13,11 +13,15 @@ export default function App() {
   const sceneManagerRef = useRef<SceneManager | null>(null);
 
   const [models, setModels] = useState<ModelDefinition[]>(MODEL_CATALOG);
-  const [activeModel, setActiveModel] = useState<ModelDefinition>(MODEL_CATALOG[30] || MODEL_CATALOG[0]);
+  const [activeModel, setActiveModel] = useState<ModelDefinition>(MODEL_CATALOG[47] || MODEL_CATALOG[0]);
   const [currentPreset, setCurrentPreset] = useState<CameraPreset>('arc-wide');
   const [isOpticsOpen, setIsOpticsOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [arcRadius, setArcRadius] = useState(11.2);
+  const [arcRadius, setArcRadius] = useState(10);
+  const [backdropDepth, setBackdropDepth] = useState(2);
+  const [backdropScale, setBackdropScale] = useState(1.3);
+  const [themeId, setThemeId] = useState(BACKDROP_THEMES[0].id);
+  const [rowStep, setRowStep] = useState(2);
   const [tiers, setTiers] = useState<TierInfo[]>(
     TIER_CONFIGS.map(t => ({ rowId: `row-${t.tier}`, nameCn: t.nameCn, count: t.count }))
   );
@@ -63,6 +67,9 @@ export default function App() {
       }, 2500);
     };
 
+    manager.setArcRadius(10);
+    manager.setBackdropDepth(2);
+    manager.setBackdropScale(1.3);
     manager.updateOptics(optics);
 
     return () => {
@@ -109,6 +116,29 @@ export default function App() {
   const handleArcRadiusChange = (radius: number) => {
     setArcRadius(radius);
     sceneManagerRef.current?.setArcRadius(radius);
+  };
+
+  const handleBackdropDepthChange = (depth: number) => {
+    setBackdropDepth(depth);
+    sceneManagerRef.current?.setBackdropDepth(depth);
+  };
+
+  const handleBackdropScaleChange = (scale: number) => {
+    setBackdropScale(scale);
+    sceneManagerRef.current?.setBackdropScale(scale);
+  };
+
+  const handleThemeChange = (id: string) => {
+    setThemeId(id);
+    sceneManagerRef.current?.setBackdropTheme(id);
+  };
+
+  const handleRowStepChange = (step: number) => {
+    setRowStep(step);
+    if (!sceneManagerRef.current) return;
+    sceneManagerRef.current.setRowStep(step);
+    setModels(sceneManagerRef.current.getModels());
+    setTiers(sceneManagerRef.current.getTiers());
   };
 
   const handleAddGlb = async (file: File, placement: GlbPlacement) => {
@@ -200,6 +230,14 @@ export default function App() {
         tiers={tiers}
         arcRadius={arcRadius}
         onArcRadiusChange={handleArcRadiusChange}
+        backdropDepth={backdropDepth}
+        onBackdropDepthChange={handleBackdropDepthChange}
+        backdropScale={backdropScale}
+        onBackdropScaleChange={handleBackdropScaleChange}
+        themeId={themeId}
+        onThemeChange={handleThemeChange}
+        rowStep={rowStep}
+        onRowStepChange={handleRowStepChange}
         onAddGlb={handleAddGlb}
       />
 

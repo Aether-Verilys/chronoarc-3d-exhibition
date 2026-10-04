@@ -1,12 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, Radius } from 'lucide-react';
-import { GlbPlacement, TierInfo } from '../types/scene';
+import { Image, Plus, Radius } from 'lucide-react';
+import { GlbPlacement, TierInfo, BACKDROP_THEMES } from '../types/scene';
 
 interface ArrayToolbarProps {
   modelCount: number;
   tiers: TierInfo[];
   arcRadius: number;
   onArcRadiusChange: (radius: number) => void;
+  backdropDepth: number;
+  onBackdropDepthChange: (depth: number) => void;
+  backdropScale: number;
+  onBackdropScaleChange: (scale: number) => void;
+  themeId: string;
+  onThemeChange: (id: string) => void;
+  rowStep: number;
+  onRowStepChange: (step: number) => void;
   onAddGlb: (file: File, placement: GlbPlacement) => void;
 }
 
@@ -15,6 +23,14 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
   tiers,
   arcRadius,
   onArcRadiusChange,
+  backdropDepth,
+  onBackdropDepthChange,
+  backdropScale,
+  onBackdropScaleChange,
+  themeId,
+  onThemeChange,
+  rowStep,
+  onRowStepChange,
   onAddGlb
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -33,7 +49,7 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
     : { mode: 'existing', rowId: placementKey.replace('existing:', '') };
 
   return (
-    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-lg max-w-[96vw]">
+    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-lg max-w-[96vw] overflow-x-auto">
       <input
         ref={fileInputRef}
         type="file"
@@ -85,6 +101,76 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
         <span className="text-[10px] text-slate-400 whitespace-nowrap">平</span>
         <span className="font-mono text-[11px] text-cyan-700 font-semibold tabular-nums w-10">
           {arcRadius.toFixed(1)}
+        </span>
+      </div>
+
+      <div className="w-px h-6 bg-slate-200" />
+
+      <div className="flex items-center gap-2 min-w-[160px]">
+        <span className="text-[11px] font-medium text-slate-600 whitespace-nowrap">递减梯度</span>
+        <input
+          type="range"
+          min="1"
+          max="6"
+          step="1"
+          value={rowStep}
+          onChange={e => onRowStepChange(parseInt(e.target.value))}
+          className="w-20 accent-cyan-600 bg-slate-200 h-1.5 rounded-lg appearance-none cursor-pointer"
+        />
+        <span className="font-mono text-[11px] text-cyan-700 font-semibold tabular-nums w-4">
+          {rowStep}
+        </span>
+      </div>
+
+      <div className="w-px h-6 bg-slate-200" />
+
+      <div className="flex items-center gap-1.5">
+        <Image className="w-3.5 h-3.5 text-cyan-700 shrink-0" />
+        {BACKDROP_THEMES.map(t => (
+          <button
+            key={t.id}
+            onClick={() => onThemeChange(t.id)}
+            className={`px-2 py-1 text-[11px] font-medium rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+              themeId === t.id
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="w-px h-6 bg-slate-200" />
+
+      <div className="flex items-center gap-2 min-w-[210px]">
+        <span className="text-[11px] font-medium text-slate-600 whitespace-nowrap">背景距离</span>
+        <span className="text-[10px] text-slate-400 whitespace-nowrap">近</span>
+        <input
+          type="range"
+          min="2"
+          max="28"
+          step="0.1"
+          value={backdropDepth}
+          onChange={e => onBackdropDepthChange(parseFloat(e.target.value))}
+          className="w-24 accent-cyan-600 bg-slate-200 h-1.5 rounded-lg appearance-none cursor-pointer"
+        />
+        <span className="text-[10px] text-slate-400 whitespace-nowrap">远</span>
+      </div>
+
+      <div className="flex items-center gap-2 min-w-[150px]">
+        <span className="text-[11px] font-medium text-slate-600 whitespace-nowrap">大小</span>
+        <input
+          type="range"
+          min="0.5"
+          max="2.4"
+          step="0.05"
+          value={backdropScale}
+          onChange={e => onBackdropScaleChange(parseFloat(e.target.value))}
+          className="w-20 accent-cyan-600 bg-slate-200 h-1.5 rounded-lg appearance-none cursor-pointer"
+        />
+        <span className="font-mono text-[11px] text-cyan-700 font-semibold tabular-nums w-8">
+          {backdropScale.toFixed(2)}
         </span>
       </div>
 

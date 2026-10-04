@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { CameraPreset, CameraViewConfig, GlbPlacement, ModelDefinition, OpticsSettings, TierInfo } from '../types/scene';
-import { MODEL_CATALOG, ModelMeshWrapper, TIER_CONFIGS, createModelWrapper } from './ModelGenerators';
+import { CameraPreset, CameraViewConfig, GlbPlacement, ModelDefinition, OpticsSettings, TierInfo, BACKDROP_THEMES } from '../types/scene';
+import { MODEL_CATALOG, ModelMeshWrapper, TIER_CONFIGS, countForRow, createCatalogDefinition, createModelWrapper, spanAngleForCount } from './ModelGenerators';
 import { ParticleSystem } from './ParticleSystem';
 import { LensDistortionShader } from '../shaders/LensDistortionShader';
 import { soundEffects } from '../audio/soundEffects';
@@ -19,7 +19,7 @@ export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
     id: 'arc-wide',
     label: 'Full 5-Tier Convex Matrix',
     labelCn: '五排全景正面',
-    position: [0, 0.4, 15.8],
+    position: [0, 0.3, 8.6],
     target: [0, 0.0, -1.2],
     fov: 72
   },
@@ -27,7 +27,7 @@ export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
     id: 'hero-low',
     label: 'Low-Angle Looking Up',
     labelCn: '仰角透视',
-    position: [0, -5.8, 12.8],
+    position: [0, -3.4, 7.2],
     target: [0, 0.8, -1.2],
     fov: 80
   },
@@ -35,7 +35,7 @@ export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
     id: 'stadium-overview',
     label: 'High-Angle Looking Down',
     labelCn: '俯角透视',
-    position: [0, 7.8, 14.5],
+    position: [0, 4.6, 8.0],
     target: [0, -0.8, -0.5],
     fov: 74
   },
@@ -43,7 +43,7 @@ export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
     id: 'center-focus',
     label: 'Center Tier Close-Up',
     labelCn: '中央层聚焦',
-    position: [0, 0.0, 9.2],
+    position: [0, 0.0, 5.6],
     target: [0, 0.0, 0.0],
     fov: 58
   },
@@ -51,8 +51,8 @@ export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
     id: 'orbit-roam',
     label: 'Curved Wing Angle',
     labelCn: '斜角翼列',
-    position: [12.5, 3.2, 11.8],
-    target: [0, 0.0, 0.0],
+    position: [2.0, 0.7, 8.4],
+    target: [0, 0.0, -1.2],
     fov: 66
   }
 };
@@ -77,14 +77,15 @@ export class SceneManager {
   private particles: ParticleSystem;
   private spotLight: THREE.SpotLight;
   private gltfLoader = new GLTFLoader();
-  private arcRadius = 11.2;
+  private arcRadius = 10;
+  private rowStep = 2;
   private readonly baseArcRadius = 11.2;
   private readonly zCenter = -11.2 * 0.65;
   private newRowSerial = 0;
   private tiers = TIER_CONFIGS.map(t => ({ ...t, rowId: `row-${t.tier}` }));
 
   // State
-  private activeModelIndex: number = 30; // Center model
+  private activeModelIndex: number = 47; // Center model of 9 rows
   private hoveredModelIndex: number | null = null;
   private optics: OpticsSettings = {
     stretchX: 1.35,
@@ -97,8 +98,8 @@ export class SceneManager {
   };
 
   // Camera animation
-  private targetCamPos = new THREE.Vector3(0, 0.4, 15.8);
-  private currentCamPos = new THREE.Vector3(0, 0.4, 15.8);
+  private targetCamPos = new THREE.Vector3(0, 0.3, 8.6);
+  private currentCamPos = new THREE.Vector3(0, 0.3, 8.6);
   private targetLookAt = new THREE.Vector3(0, 0.0, -1.2);
   private currentLookAt = new THREE.Vector3(0, 0.0, -1.2);
   private targetFov = 72;
@@ -120,6 +121,19 @@ export class SceneManager {
   private lastTargetSlotIndex: number = -1;
   private dragPlane = new THREE.Plane();
   private dragPlaneIntersect = new THREE.Vector3();
+  private backdrop: THREE.Mesh | null = null;
+  private backdropMat: THREE.MeshBasicMaterial | null = null;
+  private backdropB: THREE.Mesh | null = null;
+  private backdropMatB: THREE.MeshBasicMaterial | null = null;
+  private backdropFade = 1;
+  private backdropFadeTarget = 1;
+  private backdropDepth = 2;
+  private backdropScale = 1.3;
+  private currentThemeId = BACKDROP_THEMES[0].id;
+  private textureLoader = new THREE.TextureLoader();
+  private textureCache = new Map<string, THREE.Texture>();
+  private readonly maxOrbitTheta = 0.2;
+  private readonly maxOrbitPhi = 0.16;
 
   // Loop & timing
   private clock = new THREE.Clock();
@@ -139,13 +153,11 @@ export class SceneManager {
 
     // 1. Core Scene with Bright Spatial Void (No Floor)
     this.scene = new THREE.Scene();
-    const brightBgColor = new THREE.Color(0xf3f6fa);
-    this.scene.background = brightBgColor;
-    this.scene.fog = new THREE.FogExp2(0xf3f6fa, 0.018);
+    this.scene.background = new THREE.Color(0x0b1220);
 
     // 2. Camera
     this.camera = new THREE.PerspectiveCamera(this.optics.fov, width / height, 0.1, 100);
-    this.camera.position.set(0, 0.4, 15.8);
+    this.camera.position.set(0, 0.3, 8.6);
     this.targetCamPos.copy(this.camera.position);
 
     // 3. Renderer
@@ -197,6 +209,8 @@ export class SceneManager {
     this.particles = new ParticleSystem();
     this.scene.add(this.particles.group);
 
+    this.addFrontBackdrop();
+
     // 7. Build Slots & Models
     this.buildConvexSemicircleSlotsAndModels();
 
@@ -221,6 +235,94 @@ export class SceneManager {
     this.postMaterial.uniforms.uResolution.value.set(width * dpr, height * dpr);
     this.postMaterial.uniforms.tDiffuse.value = this.renderTarget.texture;
     this.updateShaderUniforms();
+  }
+
+  private addFrontBackdrop() {
+    const aspect = 8192 / 4332;
+    const height = 28;
+    const width = height * aspect;
+
+    const createPlane = () => {
+      const geo = new THREE.PlaneGeometry(width, height);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x1a2333,
+        toneMapped: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 1
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      this.scene.add(mesh);
+      return { mesh, mat };
+    };
+
+    const a = createPlane();
+    this.backdrop = a.mesh;
+    this.backdropMat = a.mat;
+
+    const b = createPlane();
+    this.backdropB = b.mesh;
+    this.backdropMatB = b.mat;
+    b.mat.opacity = 0;
+
+    this.applyBackdropTransform();
+
+    // Preload all theme textures
+    BACKDROP_THEMES.forEach(theme => {
+      this.textureLoader.load(theme.path, texture => {
+        if (this.isDestroyed) { texture.dispose(); return; }
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+        this.textureCache.set(theme.id, texture);
+        if (theme.id === this.currentThemeId && this.backdropMat) {
+          this.backdropMat.map = texture;
+          this.backdropMat.color.set(0xffffff);
+          this.backdropMat.needsUpdate = true;
+        }
+      });
+    });
+  }
+
+  public setBackdropTheme(themeId: string) {
+    const theme = BACKDROP_THEMES.find(t => t.id === themeId);
+    if (!theme || theme.id === this.currentThemeId) return;
+    this.currentThemeId = theme.id;
+
+    const tex = this.textureCache.get(theme.id);
+    if (!tex || !this.backdropMatB) return;
+
+    // Put new texture on layer B, start crossfade
+    this.backdropMatB.map = tex;
+    this.backdropMatB.color.set(0xffffff);
+    this.backdropMatB.needsUpdate = true;
+    this.backdropFade = 0;
+    this.backdropFadeTarget = 1;
+  }
+
+  public getBackdropThemeId() {
+    return this.currentThemeId;
+  }
+
+  private applyBackdropTransform() {
+    const z = this.zCenter - this.backdropDepth;
+    if (this.backdrop) {
+      this.backdrop.position.set(0, 1.2, z);
+      this.backdrop.scale.setScalar(this.backdropScale);
+    }
+    if (this.backdropB) {
+      this.backdropB.position.set(0, 1.2, z + 0.01);
+      this.backdropB.scale.setScalar(this.backdropScale);
+    }
+  }
+
+  public setBackdropDepth(depth: number) {
+    this.backdropDepth = Math.max(2, Math.min(28, depth));
+    this.applyBackdropTransform();
+  }
+
+  public setBackdropScale(scale: number) {
+    this.backdropScale = Math.max(0.5, Math.min(2.4, scale));
+    this.applyBackdropTransform();
   }
 
   private rowSweep(spanAngle: number) {
@@ -285,14 +387,59 @@ export class SceneManager {
     this.rebuildSlots();
 
     this.slots.forEach((slot, slotIdx) => {
-      const def = MODEL_CATALOG[slotIdx];
-      const wrapper = createModelWrapper(def, slotIdx, slot.position, slot.rotation);
+      const tier = this.tiers[slot.tier];
+      const def = slotIdx < MODEL_CATALOG.length
+        ? MODEL_CATALOG[slotIdx]
+        : createCatalogDefinition(slot.tier, slot.col, slotIdx, tier?.nameCn ?? `第${slot.tier + 1}排`);
+      def.index = slotIdx;
+
+      // Compute entrance offset: odd rows (0,2,4,...) slide from left, even rows (1,3,5,...) from right
+      const rowIsOdd = slot.tier % 2 === 0; // tier 0 = row 1 (odd)
+      const sweep = this.rowSweep(tier.spanAngle);
+      const offTheta = rowIsOdd ? (-sweep - 0.6) : (sweep + 0.6);
+      const r = this.arcRadius;
+      const offX = r * Math.sin(offTheta);
+      const offZ = this.zCenter + r * (1 - Math.cos(offTheta));
+      const startPos = new THREE.Vector3(offX, slot.position.y, offZ);
+      const startRot = new THREE.Euler(slot.rotation.x, -offTheta, 0, 'YXZ');
+
+      const wrapper = createModelWrapper(def, slotIdx, startPos, startRot);
       this.scene.add(wrapper.rootGroup);
       this.models.push(wrapper);
       this.modelOrder.push(wrapper);
+
+      // Stagger: each row starts together, cols stagger within row
+      const rowDelay = slot.tier * 350;
+      const colDelay = slot.col * 80;
+      setTimeout(() => {
+        wrapper.setSlot(slotIdx, slot.position, slot.rotation);
+      }, 600 + rowDelay + colDelay);
     });
 
-    this.selectModel(Math.min(30, this.models.length - 1), false);
+    this.selectModel(Math.min(Math.floor(this.models.length / 2), this.models.length - 1), false);
+  }
+
+  public setRowStep(step: number) {
+    step = Math.max(1, Math.min(6, Math.round(step)));
+    if (step === this.rowStep) return;
+    this.rowStep = step;
+
+    // Recalculate counts for all tiers
+    const totalRows = this.tiers.length;
+    this.tiers.forEach((t, i) => {
+      t.count = countForRow(i, totalRows, step);
+      t.spanAngle = spanAngleForCount(t.count);
+    });
+
+    // Rebuild scene: remove old models, regenerate
+    this.models.forEach(m => this.scene.remove(m.rootGroup));
+    this.models = [];
+    this.modelOrder = [];
+    this.buildConvexSemicircleSlotsAndModels();
+  }
+
+  public getRowStep() {
+    return this.rowStep;
   }
 
   public setArcRadius(radius: number) {
@@ -330,21 +477,53 @@ export class SceneManager {
       let insertAt = 0;
       if (placement.mode === 'new-row') {
         this.newRowSerial += 1;
-        const topY = this.tiers[0]?.y ?? 0;
-        this.tiers.unshift({
-          tier: 0,
+        const rowIndex = this.tiers.length;
+        const count = countForRow(rowIndex, rowIndex + 1);
+        const bottomY = this.tiers[this.tiers.length - 1]?.y ?? 0;
+        const nameCn = `第${rowIndex + 1}排`;
+        this.tiers.push({
+          tier: rowIndex,
           rowId: `new-${this.newRowSerial}`,
-          nameCn: `新排 ${this.newRowSerial}`,
-          nameEn: `New Row ${this.newRowSerial}`,
-          y: topY + 2.1,
-          count: 1,
-          spanAngle: Math.PI * 0.68
+          nameCn,
+          nameEn: `Row ${rowIndex + 1}`,
+          y: bottomY - 2.1,
+          count,
+          spanAngle: spanAngleForCount(count)
         });
-        insertAt = 0;
+        insertAt = this.tiers.slice(0, rowIndex).reduce((sum, t) => sum + t.count, 0);
+        const centerCol = Math.floor((count - 1) / 2);
+
+        this.rebuildSlots();
+        for (let c = 0; c < count; c++) {
+          const slot = this.slots[insertAt + c];
+          if (c === centerCol) {
+            def.tier = slot.tier;
+            def.col = slot.col;
+            const wrapper = createModelWrapper(def, index, slot.position, slot.rotation, gltf.scene);
+            this.scene.add(wrapper.rootGroup);
+            this.models.push(wrapper);
+            this.modelOrder.splice(insertAt + c, 0, wrapper);
+          } else {
+            const fillerIndex = this.models.length;
+            const fillerDef = createCatalogDefinition(slot.tier, c, fillerIndex, nameCn);
+            const filler = createModelWrapper(fillerDef, fillerIndex, slot.position, slot.rotation);
+            this.scene.add(filler.rootGroup);
+            this.models.push(filler);
+            this.modelOrder.splice(insertAt + c, 0, filler);
+          }
+        }
+
+        this.applySlotsToModels();
+        this.selectModel(index);
+        const added = this.models[index];
+        added.triggerBounce(6.5);
+        this.particles.emitBurst(added.rootGroup.position.clone(), def.color, 28);
+        return def;
       } else {
         const ti = this.tiers.findIndex(t => t.rowId === placement.rowId);
         const target = ti >= 0 ? ti : Math.floor(this.tiers.length / 2);
         this.tiers[target].count += 1;
+        this.tiers[target].spanAngle = spanAngleForCount(this.tiers[target].count);
         insertAt = this.tiers.slice(0, target + 1).reduce((sum, t) => sum + t.count, 0) - 1;
       }
 
@@ -432,11 +611,12 @@ export class SceneManager {
     });
 
     // Create drag projection plane perpendicular to camera facing direction
+    // Use world origin Z as coplanar point so the plane stays stable across the full arc
     const camDir = new THREE.Vector3();
     this.camera.getWorldDirection(camDir);
     this.dragPlane.setFromNormalAndCoplanarPoint(
       camDir.negate(),
-      wrapper.rootGroup.position
+      new THREE.Vector3(0, wrapper.rootGroup.position.y, 0)
     );
 
     if (this.onDragModeChange) {
@@ -470,22 +650,31 @@ export class SceneManager {
         this.draggedModel.rootGroup.position.lerp(this.dragPlaneIntersect, 0.45);
       }
 
-      // Find closest slot among all 61 slots to current drag position
+      // Screen-space slot matching: project dragged model & every slot to screen pixels,
+      // find the slot whose 2D projection is closest to the dragged model's 2D projection
+      const halfW = this.renderer.domElement.clientWidth / 2;
+      const halfH = this.renderer.domElement.clientHeight / 2;
+
+      const dragPos = this.draggedModel.rootGroup.position.clone().project(this.camera);
+      const dragScreen = { x: (dragPos.x + 1) * halfW, y: (-dragPos.y + 1) * halfH };
+
       let closestSlotIdx = 0;
-      let minSlotDist = Infinity;
+      let minScreenDist = Infinity;
+      const slotVec = new THREE.Vector3();
 
       for (let s = 0; s < this.slots.length; s++) {
-        const slot = this.slots[s];
-        const dist = this.draggedModel.rootGroup.position.distanceTo(slot.position);
-        if (dist < minSlotDist) {
-          minSlotDist = dist;
+        slotVec.copy(this.slots[s].position).project(this.camera);
+        const sx = (slotVec.x + 1) * halfW;
+        const sy = (-slotVec.y + 1) * halfH;
+        const dist = Math.hypot(sx - dragScreen.x, sy - dragScreen.y);
+        if (dist < minScreenDist) {
+          minScreenDist = dist;
           closestSlotIdx = s;
         }
       }
 
-      // When within hover distance of a slot and it's different from current placement:
-      // EXECUTE SEQUENTIAL SLIDE (iOS App Icon Reordering)!
-      if (minSlotDist < 2.2 && closestSlotIdx !== this.lastTargetSlotIndex) {
+      // Trigger reorder when screen overlap is close enough (pixels)
+      if (minScreenDist < 80 && closestSlotIdx !== this.lastTargetSlotIndex) {
         this.reorderSlotsTo(this.draggedModel, closestSlotIdx);
         this.lastTargetSlotIndex = closestSlotIdx;
       }
@@ -493,14 +682,20 @@ export class SceneManager {
     }
 
     // B. Normal Camera Sway & Orbit
-    this.parallaxOffset.x = this.mouse.x * 0.55;
-    this.parallaxOffset.y = this.mouse.y * 0.35;
+    this.parallaxOffset.x = this.mouse.x * 0.18;
+    this.parallaxOffset.y = this.mouse.y * 0.1;
 
     if (this.isPointerDown && !this.isDraggingModel) {
       const deltaX = e.clientX - this.pointerDownPos.x;
       const deltaY = e.clientY - this.pointerDownPos.y;
-      this.targetOrbitAngles.theta += deltaX * 0.003;
-      this.targetOrbitAngles.phi = Math.max(-0.55, Math.min(0.55, this.targetOrbitAngles.phi + deltaY * 0.003));
+      this.targetOrbitAngles.theta = Math.max(
+        -this.maxOrbitTheta,
+        Math.min(this.maxOrbitTheta, this.targetOrbitAngles.theta + deltaX * 0.0014)
+      );
+      this.targetOrbitAngles.phi = Math.max(
+        -this.maxOrbitPhi,
+        Math.min(this.maxOrbitPhi, this.targetOrbitAngles.phi + deltaY * 0.0012)
+      );
       this.pointerDownPos = { x: e.clientX, y: e.clientY };
     }
 
@@ -754,7 +949,7 @@ export class SceneManager {
 
       const camBase = this.targetCamPos.clone();
       camBase.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.orbitAngles.theta);
-      camBase.y += Math.sin(this.orbitAngles.phi) * 4.5;
+      camBase.y += Math.sin(this.orbitAngles.phi) * 2.2;
 
       camBase.x += this.parallaxOffset.x;
       camBase.y += this.parallaxOffset.y;
@@ -776,6 +971,29 @@ export class SceneManager {
 
     // Update Particles
     this.particles.update(time, delta);
+
+    // Backdrop crossfade
+    if (this.backdropFade !== this.backdropFadeTarget) {
+      this.backdropFade += (this.backdropFadeTarget - this.backdropFade) * Math.min(1, delta * 3.2);
+      if (Math.abs(this.backdropFade - this.backdropFadeTarget) < 0.005) {
+        this.backdropFade = this.backdropFadeTarget;
+      }
+      if (this.backdropMat) this.backdropMat.opacity = 1 - this.backdropFade;
+      if (this.backdropMatB) this.backdropMatB.opacity = this.backdropFade;
+
+      // When fade completes, swap A ← B so A is always the current
+      if (this.backdropFade >= 1) {
+        if (this.backdropMat && this.backdropMatB) {
+          this.backdropMat.map = this.backdropMatB.map;
+          this.backdropMat.opacity = 1;
+          this.backdropMat.needsUpdate = true;
+          this.backdropMatB.opacity = 0;
+          this.backdropMatB.needsUpdate = true;
+          this.backdropFade = 1;
+          this.backdropFadeTarget = 1;
+        }
+      }
+    }
 
     if (this.renderTarget) {
       this.renderer.setRenderTarget(this.renderTarget);
@@ -805,6 +1023,20 @@ export class SceneManager {
     if (this.renderTarget) {
       this.renderTarget.dispose();
     }
+    if (this.backdrop) {
+      this.backdrop.geometry.dispose();
+      if (this.backdropMat) {
+        this.backdropMat.dispose();
+      }
+    }
+    if (this.backdropB) {
+      this.backdropB.geometry.dispose();
+      if (this.backdropMatB) {
+        this.backdropMatB.dispose();
+      }
+    }
+    this.textureCache.forEach(t => t.dispose());
+    this.textureCache.clear();
     this.renderer.dispose();
     if (dom.parentElement) {
       dom.parentElement.removeChild(dom);
