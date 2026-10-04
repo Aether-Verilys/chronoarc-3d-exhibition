@@ -1,0 +1,5 @@
+{
+  "name": "ChronoArc 3D Studio",
+  "description": "Interactive Three.js 3D exhibition featuring semicircle model array, dynamic bounce physics, and spatial lens stretch distortion.",
+  "requestFramePermissions": []
+}
