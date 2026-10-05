@@ -55,9 +55,9 @@ const ARCHETYPES: ArchetypeTemplate[] = [
 ];
 
 export const ROW_BASE_N = 5;
-const ROW_STEP = 2;
+export const DEFAULT_ROW_STEP = 1;
 
-export function countForRow(index: number, totalRows: number, step = 2) {
+export function countForRow(index: number, totalRows: number, step = DEFAULT_ROW_STEP) {
   const center = (totalRows - 1) / 2;
   const distFromCenter = Math.abs(index - center);
   const steps = Math.round(center - distFromCenter);
@@ -547,7 +547,8 @@ export function createModelWrapper(
   });
   const haloRing = new THREE.Mesh(haloGeo, haloMat);
   haloRing.rotation.x = Math.PI / 2;
-  rootGroup.add(haloRing);
+  // Disable the decorative ring, including its depth-buffer contribution.
+  haloRing.visible = false;
 
   const physics: BouncePhysics = {
     baseY: 0, // relative to rootGroup

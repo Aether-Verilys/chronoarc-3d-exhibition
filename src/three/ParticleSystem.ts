@@ -12,6 +12,7 @@ interface SparkParticle {
 export class ParticleSystem {
   public group: THREE.Group;
   private ambientDustMesh: THREE.Points;
+  private dustMaterial: THREE.ShaderMaterial;
   private sparkMesh: THREE.Points;
   private sparkParticles: SparkParticle[] = [];
 
@@ -23,40 +24,71 @@ export class ParticleSystem {
   constructor() {
     this.group = new THREE.Group();
 
-    // 1. Ambient Stardust (Luminous crystal specks for light background)
-    const dustCount = 450;
+    // Soft indoor dust; animation stays on the GPU in a single draw call.
+    const dustCount = 400;
     const dustGeo = new THREE.BufferGeometry();
-    const dustPos = new Float32Array(dustCount * 3);
-    const dustColors = new Float32Array(dustCount * 3);
-
+    const positions = new Float32Array(dustCount * 3);
+    const seeds = new Float32Array(dustCount);
+    const sizes = new Float32Array(dustCount);
     for (let i = 0; i < dustCount; i++) {
-      dustPos[i * 3] = (Math.random() - 0.5) * 45;
-      dustPos[i * 3 + 1] = Math.random() * 10 - 0.5;
-      dustPos[i * 3 + 2] = (Math.random() - 0.5) * 40;
-
-      // Saturated jewel tones visible against light background
-      const choice = Math.random();
-      if (choice < 0.33) {
-        dustColors[i * 3] = 0.05; dustColors[i * 3 + 1] = 0.55; dustColors[i * 3 + 2] = 0.85; // Cyan-blue
-      } else if (choice < 0.66) {
-        dustColors[i * 3] = 0.85; dustColors[i * 3 + 1] = 0.45; dustColors[i * 3 + 2] = 0.1; // Amber
-      } else {
-        dustColors[i * 3] = 0.6; dustColors[i * 3 + 1] = 0.2; dustColors[i * 3 + 2] = 0.8; // Violet
-      }
+      // Distribute throughout the room rather than concentrating near the lens.
+      positions[i * 3] = Math.random() * 90 - 45;
+      positions[i * 3 + 1] = Math.random() * 32 - 12;
+      positions[i * 3 + 2] = Math.random() * 72 - 33;
+      seeds[i] = Math.random() * Math.PI * 2;
+      sizes[i] = 0.05 + Math.pow(Math.random(), 3) * 0.07;
     }
-
-    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
-    dustGeo.setAttribute('color', new THREE.BufferAttribute(dustColors, 3));
-
-    const dustMat = new THREE.PointsMaterial({
-      size: 0.12,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.55,
-      blending: THREE.NormalBlending
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    dustGeo.setAttribute('seed', new THREE.BufferAttribute(seeds, 1));
+    dustGeo.setAttribute('dustSize', new THREE.BufferAttribute(sizes, 1));
+    this.dustMaterial = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.AdditiveBlending,
+      uniforms: { time: { value: 0 }, viewportHeight: { value: 1 } },
+      vertexShader: `
+        attribute float seed;
+        attribute float dustSize;
+        uniform float time;
+        uniform float viewportHeight;
+        varying float opacity;
+        varying float softness;
+        void main() {
+          vec3 p = position;
+          float speed = 0.8 + seed * 0.08;
+          p.x = mod(position.x + 45. + time * speed + sin(time * 0.65 + seed) * 1.2, 90.) - 45.;
+          p.z = mod(position.z + 33. + time * cos(seed) * 0.65 + cos(time * 0.5 + seed * 2.) * 0.8, 72.) - 33.;
+          p.y = mod(position.y + 12. - time * (0.45 + seed * 0.04), 32.) - 12.;
+          vec4 view = modelViewMatrix * vec4(p, 1.);
+          float depth = -view.z;
+          gl_Position = projectionMatrix * view;
+          gl_PointSize = clamp(dustSize * viewportHeight * projectionMatrix[1][1] / max(depth, 0.1), 2.5, 8.0);
+          float boundsFade = smoothstep(-12., -10., p.y) * (1. - smoothstep(18., 20., p.y));
+          boundsFade *= smoothstep(0., 2., min(p.x + 45., 45. - p.x))
+            * smoothstep(0., 2., min(p.z + 33., 39. - p.z));
+          float light = 0.55 + 0.45 * pow(0.5 + 0.5 * sin(p.x * 0.25 + p.z * 0.12), 2.);
+          opacity = boundsFade * smoothstep(1., 4., depth) * (1. - smoothstep(36., 65., depth))
+            * light * (0.60 + 0.15 * sin(time * 0.35 + seed));
+          softness = 1. - smoothstep(3., 12., depth);
+        }`,
+      fragmentShader: `
+        varying float opacity;
+        varying float softness;
+        void main() {
+          float r = length(gl_PointCoord - 0.5) * 2.;
+          float alpha = exp(-r * r * mix(3.0, 2.0, softness)) * (1. - smoothstep(0.65, 1., r)) * opacity;
+          if (alpha < 0.003) discard;
+          gl_FragColor = vec4(vec3(1.0, 0.94, 0.82), alpha);
+        }`
     });
-
-    this.ambientDustMesh = new THREE.Points(dustGeo, dustMat);
+    this.ambientDustMesh = new THREE.Points(dustGeo, this.dustMaterial);
+    // GPU displacement extends beyond the static geometry bounds.
+    this.ambientDustMesh.frustumCulled = false;
+    const drawingSize = new THREE.Vector2();
+    this.ambientDustMesh.onBeforeRender = renderer => {
+      const target = renderer.getRenderTarget();
+      this.dustMaterial.uniforms.viewportHeight.value = target
+        ? target.height : renderer.getDrawingBufferSize(drawingSize).y;
+    };
     this.group.add(this.ambientDustMesh);
 
     // 2. Interactive Spark Bursts
@@ -115,14 +147,15 @@ export class ParticleSystem {
     }
   }
 
+  public dispose() {
+    this.ambientDustMesh.geometry.dispose();
+    this.dustMaterial.dispose();
+    this.sparkMesh.geometry.dispose();
+    (this.sparkMesh.material as THREE.Material).dispose();
+  }
+
   public update(time: number, delta: number) {
-    const dustAttr = this.ambientDustMesh.geometry.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < dustAttr.count; i++) {
-      let y = dustAttr.getY(i) + Math.sin(time * 0.6 + i) * 0.003;
-      if (y > 9) y = -0.3;
-      dustAttr.setY(i, y);
-    }
-    dustAttr.needsUpdate = true;
+    this.dustMaterial.uniforms.time.value = time;
 
     for (let i = this.sparkParticles.length - 1; i >= 0; i--) {
       const p = this.sparkParticles[i];

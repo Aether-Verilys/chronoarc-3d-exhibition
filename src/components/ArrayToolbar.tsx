@@ -16,6 +16,8 @@ interface ArrayToolbarProps {
   rowStep: number;
   onRowStepChange: (step: number) => void;
   onAddGlb: (file: File, placement: GlbPlacement) => void;
+  embedded?: boolean;
+  showTheme?: boolean;
 }
 
 export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
@@ -31,7 +33,9 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
   onThemeChange,
   rowStep,
   onRowStepChange,
-  onAddGlb
+  onAddGlb,
+  embedded = false,
+  showTheme = true
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [placementKey, setPlacementKey] = useState<string>('existing:row-2');
@@ -49,8 +53,8 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
     : { mode: 'existing', rowId: placementKey.replace('existing:', '') };
 
   return (
-    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-lg max-w-[96vw] overflow-x-auto">
-      <input
+    <div className={embedded ? "mt-5 pt-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-4 [&>input]:hidden" : "fixed bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-lg max-w-[96vw] overflow-x-auto"}>
+      {!embedded && <input
         ref={fileInputRef}
         type="file"
         accept=".glb,.gltf,model/gltf-binary,model/gltf+json"
@@ -60,17 +64,17 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
           e.target.value = '';
           if (file) onAddGlb(file, placement);
         }}
-      />
+      />}
 
-      <button
+      {!embedded && <button
         onClick={() => fileInputRef.current?.click()}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
       >
         <Plus className="w-3.5 h-3.5" />
         添加 GLB
-      </button>
+      </button>}
 
-      <select
+      {!embedded && <select
         value={placementKey}
         onChange={e => setPlacementKey(e.target.value)}
         className="h-8 max-w-[9.5rem] px-2 text-[11px] font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer outline-none"
@@ -81,10 +85,11 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
             {t.nameCn}（{t.count}）
           </option>
         ))}
-      </select>
+      </select>}
 
-      <div className="w-px h-6 bg-slate-200" />
+      {!embedded && <div className="w-px h-6 bg-slate-200" />}
 
+      {embedded && <div className="col-span-full text-xs font-bold tracking-wide text-slate-500 uppercase">矩阵排列</div>}
       <div className="flex items-center gap-2 min-w-[240px]">
         <Radius className="w-3.5 h-3.5 text-cyan-700 shrink-0" />
         <span className="text-[11px] font-medium text-slate-600 whitespace-nowrap">俯视弧度</span>
@@ -122,6 +127,7 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
         </span>
       </div>
 
+      {!embedded || showTheme ? <>
       <div className="w-px h-6 bg-slate-200" />
 
       <div className="flex items-center gap-1.5">
@@ -140,9 +146,9 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
           </button>
         ))}
       </div>
+      </> : null}
 
-      <div className="w-px h-6 bg-slate-200" />
-
+      {embedded && <div className="col-span-full text-xs font-bold tracking-wide text-slate-500 uppercase">背景设置</div>}
       <div className="flex items-center gap-2 min-w-[210px]">
         <span className="text-[11px] font-medium text-slate-600 whitespace-nowrap">背景距离</span>
         <span className="text-[10px] text-slate-400 whitespace-nowrap">近</span>

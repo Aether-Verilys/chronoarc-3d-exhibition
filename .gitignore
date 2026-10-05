@@ -4,3 +4,6 @@ dist/
 .env
 .env.*
 *.local
+
+# Local Tripo downloads (duplicates and expiring task URLs)
+tripo-out/

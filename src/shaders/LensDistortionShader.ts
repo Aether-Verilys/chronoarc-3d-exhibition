@@ -7,6 +7,8 @@ import * as THREE from 'three';
  */
 export const LensDistortionShader = {
   uniforms: {
+    tBloom: { value: null as THREE.Texture | null },
+    uBloomStrength: { value: 0.32 },
     tDiffuse: { value: null as THREE.Texture | null },
     uResolution: { value: new THREE.Vector2(1, 1) },
     uStretchX: { value: 1.35 },     // Horizontal anamorphic stretch
@@ -28,6 +30,8 @@ export const LensDistortionShader = {
 
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
+    uniform sampler2D tBloom;
+    uniform float uBloomStrength;
     uniform vec2 uResolution;
     uniform float uStretchX;
     uniform float uStretchY;
@@ -61,7 +65,7 @@ export const LensDistortionShader = {
 
     void main() {
       if (uEnabled < 0.5) {
-        gl_FragColor = texture2D(tDiffuse, vUv);
+        gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloomStrength, 1.0);
         return;
       }
 
@@ -96,7 +100,7 @@ export const LensDistortionShader = {
       float vignetteDist = length(centered * vec2(1.0, 1.15));
       float vig = 1.0 - smoothstep(0.4, 0.95, vignetteDist) * (uVignette * 0.4);
 
-      vec3 color = vec3(r, g, b) * vig;
+      vec3 color = (vec3(r, g, b) + texture2D(tBloom, uvDistorted).rgb * uBloomStrength) * vig;
 
       gl_FragColor = vec4(color, 1.0);
     }

@@ -1,0 +1,17 @@
+{
+  "floor-tile.glb": {
+    "triangles": 38386,
+    "bytes": 4992916,
+    "pbr": true
+  },
+  "wall-panel.glb": {
+    "triangles": 36850,
+    "bytes": 4759664,
+    "pbr": true
+  },
+  "cabinet.glb": {
+    "triangles": 38023,
+    "bytes": 3883116,
+    "pbr": true
+  }
+}

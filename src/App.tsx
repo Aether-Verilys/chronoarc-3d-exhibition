@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SceneManager } from './three/SceneManager';
 import { CameraPreset, GlbPlacement, ModelDefinition, OpticsSettings, TierInfo, BACKDROP_THEMES } from './types/scene';
-import { MODEL_CATALOG, TIER_CONFIGS } from './three/ModelGenerators';
+import { DEFAULT_ROW_STEP, MODEL_CATALOG, TIER_CONFIGS } from './three/ModelGenerators';
 import { TopNav } from './components/TopNav';
 import { ArrayToolbar } from './components/ArrayToolbar';
 import { OpticsControls } from './components/OpticsControls';
@@ -11,17 +11,20 @@ import { Move, Sparkles, ArrowLeft } from 'lucide-react';
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneManagerRef = useRef<SceneManager | null>(null);
+  const glbInputRef = useRef<HTMLInputElement>(null);
 
   const [models, setModels] = useState<ModelDefinition[]>(MODEL_CATALOG);
   const [activeModel, setActiveModel] = useState<ModelDefinition>(MODEL_CATALOG[47] || MODEL_CATALOG[0]);
   const [currentPreset, setCurrentPreset] = useState<CameraPreset>('front');
+  const [isSkyEnabled, setIsSkyEnabled] = useState(false);
   const [isOpticsOpen, setIsOpticsOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [arcRadius, setArcRadius] = useState(10);
   const [backdropDepth, setBackdropDepth] = useState(2);
   const [backdropScale, setBackdropScale] = useState(1.3);
   const [themeId, setThemeId] = useState(BACKDROP_THEMES[0].id);
-  const [rowStep, setRowStep] = useState(2);
+  const [placementKey, setPlacementKey] = useState("existing:row-2");
+  const [rowStep, setRowStep] = useState(DEFAULT_ROW_STEP);
   const [tiers, setTiers] = useState<TierInfo[]>(
     TIER_CONFIGS.map(t => ({ rowId: `row-${t.tier}`, nameCn: t.nameCn, count: t.count }))
   );
@@ -110,12 +113,6 @@ export default function App() {
     }
   };
 
-  const handleWaveBounce = () => {
-    if (sceneManagerRef.current) {
-      sceneManagerRef.current.triggerWaveBounce();
-    }
-  };
-
   const handleArcRadiusChange = (radius: number) => {
     setArcRadius(radius);
     sceneManagerRef.current?.setArcRadius(radius);
@@ -131,7 +128,14 @@ export default function App() {
     sceneManagerRef.current?.setBackdropScale(scale);
   };
 
+  const handleCycleTheme = () => {
+    const idx = BACKDROP_THEMES.findIndex(t => t.id === themeId);
+    handleThemeChange(BACKDROP_THEMES[(idx + 1) % BACKDROP_THEMES.length].id);
+  };
+
   const handleThemeChange = (id: string) => {
+    setIsSkyEnabled(false);
+    sceneManagerRef.current?.setSkyEnabled(false);
     setThemeId(id);
     sceneManagerRef.current?.setBackdropTheme(id);
   };
@@ -203,6 +207,8 @@ export default function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#f3f6fa] select-none font-sans text-slate-900">
+      <input ref={glbInputRef} type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" className="hidden" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleAddGlb(file, placementKey === 'new-row' ? { mode: 'new-row' } : { mode: 'existing', rowId: placementKey.replace('existing:', '') }); }} />
+
       {/* 3D WebGL Canvas */}
       <div ref={containerRef} className="absolute inset-0 z-0 cursor-grab active:cursor-grabbing" />
 
@@ -220,7 +226,17 @@ export default function App() {
         onToggleMute={handleToggleMute}
         isOpticsOpen={isOpticsOpen}
         onToggleOptics={() => setIsOpticsOpen(v => !v)}
-        onWaveBounce={handleWaveBounce}
+        onAddGlb={() => glbInputRef.current?.click()}
+        onCycleTheme={handleCycleTheme}
+        isSkyEnabled={isSkyEnabled}
+        onToggleSky={() => {
+          const enabled = !isSkyEnabled;
+          sceneManagerRef.current?.setSkyEnabled(enabled);
+          setIsSkyEnabled(enabled);
+        }}
+        tiers={tiers}
+        placementKey={placementKey}
+        onPlacementChange={setPlacementKey}
         modelCount={models.length}
       />
 
@@ -230,24 +246,26 @@ export default function App() {
           optics={optics}
           onChange={handleOpticsChange}
           onClose={() => setIsOpticsOpen(false)}
-        />
+        >
+          <ArrayToolbar
+            modelCount={models.length}
+            tiers={tiers}
+            arcRadius={arcRadius}
+            onArcRadiusChange={handleArcRadiusChange}
+            backdropDepth={backdropDepth}
+            onBackdropDepthChange={handleBackdropDepthChange}
+            backdropScale={backdropScale}
+            onBackdropScaleChange={handleBackdropScaleChange}
+            themeId={themeId}
+            onThemeChange={handleThemeChange}
+            rowStep={rowStep}
+            onRowStepChange={handleRowStepChange}
+            onAddGlb={handleAddGlb}
+            embedded
+            showTheme={false}
+          />
+        </OpticsControls>
       )}
-
-      <ArrayToolbar
-        modelCount={models.length}
-        tiers={tiers}
-        arcRadius={arcRadius}
-        onArcRadiusChange={handleArcRadiusChange}
-        backdropDepth={backdropDepth}
-        onBackdropDepthChange={handleBackdropDepthChange}
-        backdropScale={backdropScale}
-        onBackdropScaleChange={handleBackdropScaleChange}
-        themeId={themeId}
-        onThemeChange={handleThemeChange}
-        rowStep={rowStep}
-        onRowStepChange={handleRowStepChange}
-        onAddGlb={handleAddGlb}
-      />
 
       {/* Active iOS Drag Notification Banner */}
       {isDraggingModel && (

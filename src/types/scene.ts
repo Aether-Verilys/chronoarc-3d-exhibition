@@ -20,7 +20,7 @@ export interface OpticsSettings {
   enableShader: boolean;  // Toggle shader post-processing
 }
 
-export type CameraPreset = 'front' | 'low-angle' | 'close-up';
+export type CameraPreset = 'front' | 'low-angle';
 
 export type GlbPlacement = { mode: 'new-row' } | { mode: 'existing'; rowId: string };
 

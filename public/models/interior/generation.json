@@ -1,0 +1,14 @@
+{
+  "cabinet": {
+    "task_id": "69f700c7-f7ed-4f3f-95d0-f9c480424dd7",
+    "prompt": "One empty square luxury collectible display niche, open front facing camera, no glass no objects, walnut veneer back and sides, thin champagne bronze frame, beveled joinery, recessed warm white LED channel hidden under top lip, flat shelf bottom. Architectural furniture module, photoreal PBR wood grain brushed metal micro roughness. Single isolated object."
+  },
+  "wall-panel": {
+    "task_id": "53570e3d-b302-44f7-8d76-36f00197dc0f",
+    "prompt": "One rectangular luxury interior wall panel, vertical walnut fluted slats with champagne brass inlay and warm limestone center panel, fine realistic material grain, beveled edges, architectural modular panel, flat back, front facing camera, isolated object, photoreal PBR materials, no furniture."
+  },
+  "floor-tile": {
+    "task_id": "a869cf15-ca43-452e-8cd9-8b651faf2227",
+    "prompt": "One square large luxury gallery floor tile, honed warm taupe travertine with delicate natural pores, subtle stone veins, finely beveled edges, very thin slab, top surface facing upward, isolated architectural modular tile, physically based realistic material, no objects no text."
+  }
+}

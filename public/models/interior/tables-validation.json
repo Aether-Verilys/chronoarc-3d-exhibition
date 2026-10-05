@@ -1,0 +1,10 @@
+{
+  "coffee-table": {
+    "triangles": 4530,
+    "pbr": true
+  },
+  "side-table": {
+    "triangles": 4112,
+    "pbr": true
+  }
+}

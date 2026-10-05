@@ -1,0 +1,18 @@
+{
+  "olive-planter": {
+    "triangles": 12567,
+    "pbr": true
+  },
+  "lounge-bench": {
+    "triangles": 16383,
+    "pbr": true
+  },
+  "sculpture": {
+    "triangles": 16167,
+    "pbr": true
+  },
+  "sofa": {
+    "triangles": 15782,
+    "pbr": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "olive-planter": {
+    "task_id": "451d680f-dcaa-41dc-a338-4dfe28702dcc",
+    "prompt": "A refined indoor olive tree in a large ivory ceramic planter, sculpted trunk, sparse elegant foliage, luxury warm minimalist gallery decor, isolated full object, realistic PBR materials"
+  },
+  "lounge-bench": {
+    "task_id": "81065197-1cde-4ea5-8594-c717f7eeeda5",
+    "prompt": "Luxury gallery bench, cream boucle upholstered long seat, rounded ends, dark walnut legs and bronze details, elegant quiet minimalist furniture, isolated full object, realistic PBR materials"
+  },
+  "sculpture": {
+    "task_id": "a447cf9a-4f2a-46c6-9e8e-c006332a1155",
+    "prompt": "Elegant abstract bronze looping ribbon sculpture on a dark travertine pedestal, art gallery collectible display room decor, sophisticated minimal silhouette, isolated full object, realistic PBR materials"
+  },
+  "sofa": {
+    "task_id": "109de23a-320f-40ff-9557-8284404c6825",
+    "prompt": "Elegant three-seat sofa with a full upholstered backrest and two rounded armrests, warm ivory boucle cushions, walnut base and short legs, refined quiet luxury gallery lounge furniture, single isolated object, photoreal PBR woven fabric and wood, no room no people"
+  }
+}

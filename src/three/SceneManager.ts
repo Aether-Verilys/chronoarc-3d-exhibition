@@ -1,6 +1,8 @@
+import { SubtleBloom } from './SubtleBloom';
+import { createSkyEnvironment } from './SkyEnvironment';
 import * as THREE from 'three';
 import { CameraPreset, CameraViewConfig, GlbPlacement, ModelDefinition, OpticsSettings, TierInfo, BACKDROP_THEMES } from '../types/scene';
-import { MODEL_CATALOG, ModelMeshWrapper, TIER_CONFIGS, countForRow, createCatalogDefinition, createModelWrapper, spanAngleForCount } from './ModelGenerators';
+import { DEFAULT_ROW_STEP, MODEL_CATALOG, ModelMeshWrapper, TIER_CONFIGS, countForRow, createCatalogDefinition, createModelWrapper, fitObjectToSlot, spanAngleForCount } from './ModelGenerators';
 import { ParticleSystem } from './ParticleSystem';
 import { LensDistortionShader } from '../shaders/LensDistortionShader';
 import { soundEffects } from '../audio/soundEffects';
@@ -31,17 +33,33 @@ export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
     target: [0, 0.8, -1.2],
     fov: 80
   },
-  'close-up': {
-    id: 'close-up',
-    label: 'Close Up',
-    labelCn: '特写',
-    position: [0, 0.0, 5.6],
-    target: [0, 0.0, 0.0],
-    fov: 58
-  }
 };
 
 export class SceneManager {
+  private skyEnvironment: ReturnType<typeof createSkyEnvironment> | null = null;
+  private skyEnabled = false;
+  public setSkyEnabled(enabled: boolean) {
+    if (enabled && !this.skyEnvironment) {
+      this.skyEnvironment = createSkyEnvironment(this.renderer);
+      this.skyEnvironment.updateSlots(this.slots);
+      this.scene.add(this.skyEnvironment.room);
+    }
+    if (this.skyEnvironment) this.skyEnvironment.room.visible = enabled;
+    this.renderer.toneMappingExposure = enabled ? 0.78 : 1.05;
+    this.scene.children.forEach(object => {
+      if (object instanceof THREE.Light) {
+        object.userData.originalIntensity ??= object.intensity;
+        object.intensity = object.userData.originalIntensity * (enabled ? 0.45 : 1);
+      }
+    });
+    this.skyEnabled = enabled;
+    if (this.backdrop) this.backdrop.visible = !enabled;
+    if (this.backdropB) this.backdropB.visible = !enabled;
+    this.scene.background = new THREE.Color(enabled ? 0x37332e : 0x0b1220);
+    this.scene.environment = enabled ? this.skyEnvironment!.environment : null;
+    this.scene.environmentIntensity = enabled ? 0.3 : 0;
+  }
+
   private container: HTMLElement;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
@@ -53,6 +71,7 @@ export class SceneManager {
   private postQuad: THREE.Mesh;
   private renderTarget: THREE.WebGLRenderTarget | null = null;
   private postMaterial: THREE.ShaderMaterial;
+  private bloom = new SubtleBloom();
 
   // Slots & Ordered Models List
   private slots: MatrixSlot[] = [];
@@ -62,7 +81,7 @@ export class SceneManager {
   private spotLight: THREE.SpotLight;
   private gltfLoader = new GLTFLoader();
   private arcRadius = 10;
-  private rowStep = 2;
+  private rowStep = DEFAULT_ROW_STEP;
   private readonly baseArcRadius = 11.2;
   private readonly zCenter = -11.2 * 0.65;
   private newRowSerial = 0;
@@ -123,6 +142,11 @@ export class SceneManager {
   private clock = new THREE.Clock();
   private animationFrameId: number | null = null;
   private isDestroyed = false;
+  private focusRotationBase = new THREE.Quaternion();
+  private focusRotation = new THREE.Vector2();
+  private targetFocusRotation = new THREE.Vector2();
+  private focusPointerId: number | null = null;
+  private pendingClickModel: number | null = null;
   private isModelFocused = false;
   private focusedModelIndex: number | null = null;
   private backdropFocus = 0;
@@ -202,6 +226,7 @@ export class SceneManager {
 
     // 7. Build Slots & Models
     this.buildConvexSemicircleSlotsAndModels();
+    this.loadFoodModels();
 
     // 8. Event Listeners
     this.bindEvents();
@@ -223,6 +248,8 @@ export class SceneManager {
 
     this.postMaterial.uniforms.uResolution.value.set(width * dpr, height * dpr);
     this.postMaterial.uniforms.tDiffuse.value = this.renderTarget.texture;
+    this.bloom.setSize(width * dpr, height * dpr);
+    this.postMaterial.uniforms.tBloom.value = this.bloom.texture;
     this.updateShaderUniforms();
   }
 
@@ -363,6 +390,7 @@ export class SceneManager {
   }
 
   private applySlotsToModels() {
+    this.skyEnvironment?.updateSlots(this.slots);
     this.modelOrder.forEach((m, idx) => {
       const slot = this.slots[idx];
       if (!slot) return;
@@ -372,8 +400,40 @@ export class SceneManager {
     });
   }
 
+  private async loadFoodModels() {
+    const foodModels = [
+      { file: '/models/food/ramen.glb', nameCn: '手办拉面' },
+      { file: '/models/food/ramen-2.glb', nameCn: '手办拉面·彩釉' },
+      { file: '/models/food/ramen-3.glb', nameCn: '手办拉面·浓汤' },
+      { file: '/models/food/ramen-4.glb', nameCn: '手办拉面·玉子' },
+      { file: '/models/food/sushi.glb', nameCn: '手办寿司拼盘' },
+      { file: '/models/food/burger.glb', nameCn: '手办汉堡薯条' },
+      { file: '/models/food/donut.glb', nameCn: '手办彩釉甜甜圈' },
+      { file: '/models/food/cake.glb', nameCn: '手办生日蛋糕' },
+      { file: '/models/food/pizza.glb', nameCn: '手办披萨切片' }
+    ];
+    await Promise.all(foodModels.map(async (food, foodIndex) => {
+      try {
+        const gltf = await this.gltfLoader.loadAsync(food.file);
+        for (let index = foodIndex; index < this.models.length; index += foodModels.length) {
+          const wrapper = this.models[index];
+          if (!wrapper) continue;
+          const content = wrapper.contentGroup;
+          content.clear();
+          content.add(fitObjectToSlot(gltf.scene.clone(true)));
+          wrapper.definition.nameCn = food.nameCn;
+          wrapper.definition.nameEn = `Collectible Food #${foodIndex + 1}`;
+          wrapper.definition.category = 'Food Figurine';
+        }
+      } catch (error) {
+        console.warn(`食物模型加载失败: ${food.file}`, error);
+      }
+    }));
+  }
+
   private buildConvexSemicircleSlotsAndModels() {
     this.rebuildSlots();
+    this.skyEnvironment?.updateSlots(this.slots);
 
     this.slots.forEach((slot, slotIdx) => {
       const tier = this.tiers[slot.tier];
@@ -411,6 +471,7 @@ export class SceneManager {
   public setRowStep(step: number) {
     step = Math.max(1, Math.min(6, Math.round(step)));
     if (step === this.rowStep) return;
+    this.exitModelFocus();
     this.rowStep = step;
 
     // Recalculate counts for all tiers
@@ -425,6 +486,7 @@ export class SceneManager {
     this.models = [];
     this.modelOrder = [];
     this.buildConvexSemicircleSlotsAndModels();
+    this.loadFoodModels();
   }
 
   public getRowStep() {
@@ -539,11 +601,21 @@ export class SceneManager {
     dom.addEventListener('pointermove', this.onPointerMove);
     dom.addEventListener('pointerdown', this.onPointerDown);
     dom.addEventListener('dblclick', this.onDoubleClick);
+    dom.addEventListener('click', this.onModelClick);
     dom.addEventListener('pointerup', this.onPointerUp);
     dom.addEventListener('pointercancel', this.onPointerUp);
+    dom.addEventListener('lostpointercapture', this.onPointerUp);
+    dom.style.touchAction = 'none';
     dom.addEventListener('wheel', this.onWheel, { passive: false });
     window.addEventListener('resize', this.onResize);
   }
+
+  private onModelClick = (e: MouseEvent) => {
+    const index = this.pendingClickModel;
+    this.pendingClickModel = null;
+    // The browser counts clicks in a double-click sequence; only the first bounces.
+    if (index !== null && e.detail === 1) this.triggerBounce(index);
+  };
 
   private onDoubleClick = (e: MouseEvent) => {
     if (this.isDraggingModel) return;
@@ -558,7 +630,15 @@ export class SceneManager {
     else this.focusModel(index);
   };
 
-  private onPointerDown = (e: MouseEvent) => {
+  private onPointerDown = (e: PointerEvent) => {
+    if (!e.isPrimary || e.button !== 0) return;
+    this.pendingClickModel = null;
+    if (this.isModelFocused) {
+      this.focusPointerId = e.pointerId;
+      this.pointerDownPos = { x: e.clientX, y: e.clientY };
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+      return;
+    }
     this.isPointerDown = true;
     this.pointerDownPos = { x: e.clientX, y: e.clientY };
 
@@ -627,7 +707,17 @@ export class SceneManager {
     }
   }
 
-  private onPointerMove = (e: MouseEvent) => {
+  private onPointerMove = (e: PointerEvent) => {
+    if (this.isModelFocused) {
+      if (e.pointerId === this.focusPointerId) {
+        const dx = e.clientX - this.pointerDownPos.x;
+        const dy = e.clientY - this.pointerDownPos.y;
+        this.targetFocusRotation.x = THREE.MathUtils.clamp(this.targetFocusRotation.x + dy * 0.006, -Math.PI / 4, Math.PI / 4);
+        this.targetFocusRotation.y = THREE.MathUtils.clamp(this.targetFocusRotation.y + dx * 0.006, -Math.PI / 3, Math.PI / 3);
+        this.pointerDownPos = { x: e.clientX, y: e.clientY };
+      }
+      return;
+    }
     const rect = this.renderer.domElement.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -733,7 +823,18 @@ export class SceneManager {
     soundEffects.playShift();
   }
 
-  private onPointerUp = (e: MouseEvent) => {
+  private onPointerUp = (e: PointerEvent) => {
+    if (this.isModelFocused || this.focusPointerId !== null) {
+      if (e.pointerId === this.focusPointerId) {
+        this.focusPointerId = null;
+        if (this.renderer.domElement.hasPointerCapture(e.pointerId)) {
+          this.renderer.domElement.releasePointerCapture(e.pointerId);
+        }
+      }
+      this.isPointerDown = false;
+      this.pressedModelWrapper = null;
+      return;
+    }
     const dist = Math.hypot(e.clientX - this.pointerDownPos.x, e.clientY - this.pointerDownPos.y);
     this.isPointerDown = false;
 
@@ -778,7 +879,7 @@ export class SceneManager {
     if (this.pressedModelWrapper !== null && dist < 6) {
       const wrapper = this.pressedModelWrapper;
       this.selectModel(wrapper.definition.index, true);
-      this.triggerBounce(wrapper.definition.index);
+      this.pendingClickModel = e.type === 'pointerup' ? wrapper.definition.index : null;
     }
 
     this.pressedModelWrapper = null;
@@ -839,7 +940,13 @@ export class SceneManager {
       this.preFocusCamera.target.copy(this.targetLookAt);
       this.preFocusCamera.fov = this.targetFov;
     }
+    if (this.focusedModelIndex !== null) {
+      this.models[this.focusedModelIndex]?.contentGroup.quaternion.copy(this.focusRotationBase);
+    }
     const model = this.models[index];
+    this.focusRotationBase.copy(model.contentGroup.quaternion);
+    this.focusRotation.set(0, 0);
+    this.targetFocusRotation.set(0, 0);
     const center = model.rootGroup.position.clone();
     const offset = this.camera.position.clone().sub(center).normalize();
     this.targetCamPos.copy(center).add(offset.multiplyScalar(3.2));
@@ -856,6 +963,14 @@ export class SceneManager {
     this.targetCamPos.copy(this.preFocusCamera.position);
     this.targetLookAt.copy(this.preFocusCamera.target);
     this.targetFov = this.preFocusCamera.fov;
+    if (this.focusedModelIndex !== null) {
+      this.models[this.focusedModelIndex]?.contentGroup.quaternion.copy(this.focusRotationBase);
+    }
+    const pointerId = this.focusPointerId;
+    this.focusPointerId = null;
+    if (pointerId !== null && this.renderer.domElement.hasPointerCapture(pointerId)) {
+      this.renderer.domElement.releasePointerCapture(pointerId);
+    }
     this.isModelFocused = false;
     this.focusedModelIndex = null;
     this.onModelFocusChange?.(false);
@@ -899,17 +1014,6 @@ export class SceneManager {
     if (this.onModelBounce) {
       this.onModelBounce(wrapper.definition);
     }
-  }
-
-  public triggerWaveBounce() {
-    this.models.forEach((m, i) => {
-      const distFromCenter = Math.abs(m.rootGroup.position.x) + Math.abs(m.rootGroup.position.y) * 0.8;
-      setTimeout(() => {
-        if (!this.isDestroyed) {
-          this.triggerBounce(i, 7.8);
-        }
-      }, distFromCenter * 75);
-    });
   }
 
   public triggerTierBounce(tierNumber: number) {
@@ -982,11 +1086,13 @@ export class SceneManager {
       this.orbitAngles.phi += (this.targetOrbitAngles.phi - this.orbitAngles.phi) * 0.08;
 
       const camBase = this.targetCamPos.clone();
+      if (!this.isModelFocused) {
       camBase.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.orbitAngles.theta);
       camBase.y += Math.sin(this.orbitAngles.phi) * 2.2;
 
       camBase.x += this.parallaxOffset.x;
       camBase.y += this.parallaxOffset.y;
+      }
 
       this.currentCamPos.lerp(camBase, 0.06);
       this.currentLookAt.lerp(this.targetLookAt, 0.06);
@@ -1002,6 +1108,14 @@ export class SceneManager {
 
     // Update Models (smooth lerping to target slots + physics + jiggle)
     this.models.forEach(m => m.update(time, delta));
+    if (this.isModelFocused && this.focusedModelIndex !== null) {
+      this.focusRotation.lerp(this.targetFocusRotation, 1 - Math.exp(-15 * delta));
+      const rotation = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(this.focusRotation.x, this.focusRotation.y, 0, 'YXZ')
+      );
+      this.models[this.focusedModelIndex]?.contentGroup.quaternion
+        .copy(rotation).multiply(this.focusRotationBase);
+    }
 
     // Soften the gallery backdrop while a model is focused. The model remains crisp.
     const focusTarget = this.isModelFocused ? 1 : 0;
@@ -1043,6 +1157,7 @@ export class SceneManager {
     if (this.renderTarget) {
       this.renderer.setRenderTarget(this.renderTarget);
       this.renderer.render(this.scene, this.camera);
+      this.bloom.render(this.renderer, this.renderTarget.texture);
 
       this.renderer.setRenderTarget(null);
       this.renderer.render(this.postScene, this.postCamera);
@@ -1061,8 +1176,10 @@ export class SceneManager {
     dom.removeEventListener('pointermove', this.onPointerMove);
     dom.removeEventListener('pointerdown', this.onPointerDown);
     dom.removeEventListener('dblclick', this.onDoubleClick);
+    dom.removeEventListener('click', this.onModelClick);
     dom.removeEventListener('pointerup', this.onPointerUp);
     dom.removeEventListener('pointercancel', this.onPointerUp);
+    dom.removeEventListener('lostpointercapture', this.onPointerUp);
     dom.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('resize', this.onResize);
 
@@ -1083,6 +1200,11 @@ export class SceneManager {
     }
     this.textureCache.forEach(t => t.dispose());
     this.textureCache.clear();
+    this.skyEnvironment?.dispose();
+    this.particles.dispose();
+    this.bloom.dispose();
+    this.postMaterial.dispose();
+    this.postQuad.geometry.dispose();
     this.renderer.dispose();
     if (dom.parentElement) {
       dom.parentElement.removeChild(dom);

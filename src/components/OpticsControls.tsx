@@ -6,12 +6,14 @@ interface OpticsControlsProps {
   optics: OpticsSettings;
   onChange: (optics: Partial<OpticsSettings>) => void;
   onClose: () => void;
+  children?: React.ReactNode;
 }
 
 export const OpticsControls: React.FC<OpticsControlsProps> = ({
   optics,
   onChange,
-  onClose
+  onClose,
+  children
 }) => {
   const applyPreset = (preset: 'anamorphic' | 'fisheye' | 'tunnel' | 'pristine') => {
     switch (preset) {
@@ -63,13 +65,13 @@ export const OpticsControls: React.FC<OpticsControlsProps> = ({
   };
 
   return (
-    <div className="fixed top-18 right-6 z-30 w-80 p-5 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-2xl text-left pointer-events-auto">
+    <div className="fixed top-18 right-6 z-30 w-[min(92vw,680px)] max-h-[calc(100vh-6rem)] overflow-y-auto p-5 rounded-2xl bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-2xl text-left pointer-events-auto">
       {/* Header */}
       <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
         <div className="flex items-center gap-2">
           <Sliders className="w-4 h-4 text-cyan-600" />
           <h3 className="font-display text-sm font-bold text-slate-900 tracking-wide">
-            相机形变与空间透视滤镜
+            相机、场景与矩阵设置
           </h3>
         </div>
         <button
@@ -79,6 +81,8 @@ export const OpticsControls: React.FC<OpticsControlsProps> = ({
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      <div className="mb-3 text-xs font-bold tracking-wide text-slate-500 uppercase">相机形变</div>
 
       {/* Filter Master Toggle */}
       <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200/60 mb-4">
@@ -221,6 +225,8 @@ export const OpticsControls: React.FC<OpticsControlsProps> = ({
           />
         </div>
       </div>
+
+      {children}
 
       {/* Reset button */}
       <button
