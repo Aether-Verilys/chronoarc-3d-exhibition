@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="180" viewBox="0 0 920 180">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="titleGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff6ec7"/>
+      <stop offset="0.5" stop-color="#ffd54a"/>
+      <stop offset="1" stop-color="#6ec7ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="908" height="168" rx="26" fill="#1c0f2e" stroke="#ff4fc3" stroke-width="4"/>
+  <rect x="18" y="18" width="884" height="144" rx="18" fill="none" stroke="#7a3fa0" stroke-width="2"/>
+  <text x="460" y="102" text-anchor="middle" font-family="'Microsoft YaHei','PingFang SC',sans-serif"
+        font-size="76" font-weight="900" letter-spacing="14" fill="url(#titleGrad)" filter="url(#glow)">抓娃娃</text>
+  <text x="460" y="146" text-anchor="middle" font-family="'Segoe UI',sans-serif"
+        font-size="30" font-weight="700" letter-spacing="10" fill="#8fd0ff" filter="url(#glow)">CLAW MACHINE</text>
+  <g fill="#ffd54a" filter="url(#glow)">
+    <circle cx="52" cy="52" r="7"/><circle cx="52" cy="128" r="7"/>
+    <circle cx="868" cy="52" r="7"/><circle cx="868" cy="128" r="7"/>
+  </g>
+</svg>

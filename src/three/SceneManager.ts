@@ -1,3 +1,5 @@
+import { SunsetGallery } from './SunsetGallery';
+import { CyberGallery } from './CyberGallery';
 import { SubtleBloom } from './SubtleBloom';
 import { createSkyEnvironment } from './SkyEnvironment';
 import * as THREE from 'three';
@@ -36,9 +38,41 @@ export const CAMERA_CONFIGS: Record<CameraPreset, CameraViewConfig> = {
 };
 
 export class SceneManager {
+  private sunsetGallery: SunsetGallery | null = null;
+  private cyberGallery: CyberGallery | null = null;
+  private cyberEnabled = false;
+  private sunsetEnabled = false;
+  private sunsetPointer: number | null = null;
+  public async setSunsetEnabled(enabled: boolean) {
+    this.exitModelFocus();
+    if(enabled && !this.sunsetGallery) this.sunsetGallery = new SunsetGallery(this.renderer);
+    this.sunsetEnabled = enabled;
+    this.cyberEnabled = false;
+    this.renderer.shadowMap.enabled = enabled;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMappingExposure = enabled ? 0.85 : (this.skyEnabled ? 0.78 : 1.05);
+    this.updateShaderUniforms();
+    if(enabled) {
+      this.sunsetGallery!.resize(this.container.clientWidth,this.container.clientHeight);
+      await this.sunsetGallery!.ready;
+    }
+  }
+  public async setCyberEnabled(enabled: boolean) {
+    this.exitModelFocus();
+    if (enabled && !this.cyberGallery) this.cyberGallery = new CyberGallery(this.renderer);
+    this.cyberEnabled = enabled;
+    this.sunsetEnabled = false;
+    this.renderer.shadowMap.enabled = enabled;
+    this.renderer.toneMappingExposure = enabled ? 0.9 : 1.05;
+    this.updateShaderUniforms();
+    if (enabled) { this.cyberGallery!.resize(this.container.clientWidth, this.container.clientHeight); await this.cyberGallery!.ready; }
+  }
+
   private skyEnvironment: ReturnType<typeof createSkyEnvironment> | null = null;
   private skyEnabled = false;
   public setSkyEnabled(enabled: boolean) {
+    void this.setSunsetEnabled(false);
+    this.cyberEnabled = false;
     if (enabled && !this.skyEnvironment) {
       this.skyEnvironment = createSkyEnvironment(this.renderer);
       this.skyEnvironment.updateSlots(this.slots);
@@ -611,6 +645,10 @@ export class SceneManager {
   }
 
   private onModelClick = (e: MouseEvent) => {
+    if (this.sunsetEnabled || this.cyberEnabled) {
+      if (e.detail === 1) { const rect = this.renderer.domElement.getBoundingClientRect(); (this.cyberEnabled ? this.cyberGallery : this.sunsetGallery)?.handleClick(e.clientX, e.clientY, rect); }
+      return;
+    }
     const index = this.pendingClickModel;
     this.pendingClickModel = null;
     // The browser counts clicks in a double-click sequence; only the first bounces.
@@ -618,6 +656,11 @@ export class SceneManager {
   };
 
   private onDoubleClick = (e: MouseEvent) => {
+    if(this.sunsetEnabled || this.cyberEnabled) {
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      (this.cyberEnabled ? this.cyberGallery : this.sunsetGallery)?.handleDoubleClick(e.clientX, e.clientY, rect);
+      return;
+    }
     if (this.isDraggingModel) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -633,6 +676,16 @@ export class SceneManager {
   private onPointerDown = (e: PointerEvent) => {
     if (!e.isPrimary || e.button !== 0) return;
     this.pendingClickModel = null;
+    if(this.sunsetEnabled || this.cyberEnabled) {
+      this.sunsetPointer=e.pointerId;
+      this.pointerDownPos={x:e.clientX,y:e.clientY};
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+      if (!this.cyberEnabled) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.sunsetGallery?.handlePointerDown(e.clientX, e.clientY, rect, e.pointerId);
+      }
+      return;
+    }
     if (this.isModelFocused) {
       this.focusPointerId = e.pointerId;
       this.pointerDownPos = { x: e.clientX, y: e.clientY };
@@ -708,6 +761,17 @@ export class SceneManager {
   }
 
   private onPointerMove = (e: PointerEvent) => {
+    if(this.sunsetEnabled || this.cyberEnabled) {
+      if(this.sunsetPointer===e.pointerId) {
+        if (!this.cyberEnabled) {
+          const rect = this.renderer.domElement.getBoundingClientRect();
+          this.sunsetGallery?.handlePointerMove(e.clientX, e.clientY, rect, e.pointerId);
+        }
+        (this.cyberEnabled ? this.cyberGallery : this.sunsetGallery)?.orbit(e.clientX-this.pointerDownPos.x,e.clientY-this.pointerDownPos.y);
+        this.pointerDownPos={x:e.clientX,y:e.clientY};
+      }
+      return;
+    }
     if (this.isModelFocused) {
       if (e.pointerId === this.focusPointerId) {
         const dx = e.clientX - this.pointerDownPos.x;
@@ -824,6 +888,15 @@ export class SceneManager {
   }
 
   private onPointerUp = (e: PointerEvent) => {
+    if(this.sunsetPointer===e.pointerId) {
+      if (!this.cyberEnabled) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        this.sunsetGallery?.handlePointerUp(e.clientX, e.clientY, rect, e.pointerId);
+      }
+      this.sunsetPointer=null;
+      if(this.renderer.domElement.hasPointerCapture(e.pointerId)) this.renderer.domElement.releasePointerCapture(e.pointerId);
+      return;
+    }
     if (this.isModelFocused || this.focusPointerId !== null) {
       if (e.pointerId === this.focusPointerId) {
         this.focusPointerId = null;
@@ -888,6 +961,10 @@ export class SceneManager {
   private onWheel = (e: WheelEvent) => {
     e.preventDefault();
     if (this.isDraggingModel) return;
+    if (this.cyberEnabled) {
+      this.cyberGallery?.zoom(e.deltaY);
+      return;
+    }
     const zoomDelta = e.deltaY * 0.006;
     const currentDist = this.targetCamPos.length();
     const newDist = Math.max(5.5, Math.min(26.0, currentDist + zoomDelta));
@@ -899,6 +976,7 @@ export class SceneManager {
     const width = this.container.clientWidth || window.innerWidth;
     const height = this.container.clientHeight || window.innerHeight;
 
+    this.sunsetGallery?.resize(width, height); this.cyberGallery?.resize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
 
@@ -1055,7 +1133,8 @@ export class SceneManager {
     u.uDistortion.value = this.optics.distortion;
     u.uChromatic.value = this.optics.chromatic;
     u.uVignette.value = this.optics.vignette;
-    u.uEnabled.value = this.optics.enableShader ? 1.0 : 0.0;
+    u.uEnabled.value = (this.sunsetEnabled || this.cyberEnabled) ? 0 : (this.optics.enableShader ? 1.0 : 0.0);
+    u.uBloomStrength.value = (this.sunsetEnabled || this.cyberEnabled) ? 0.22 : 0.32;
   }
 
   public getOptics(): OpticsSettings {
@@ -1069,6 +1148,7 @@ export class SceneManager {
   public getModels(): ModelDefinition[] {
     return this.modelOrder.map(m => m.definition);
   }
+
 
   private animate = () => {
     if (this.isDestroyed) return;
@@ -1154,15 +1234,17 @@ export class SceneManager {
       }
     }
 
+    if (this.sunsetEnabled || this.cyberEnabled) (this.cyberEnabled ? this.cyberGallery : this.sunsetGallery)?.update(delta, time);
+
     if (this.renderTarget) {
       this.renderer.setRenderTarget(this.renderTarget);
-      this.renderer.render(this.scene, this.camera);
+      this.renderer.render((this.cyberEnabled ? this.cyberGallery!.scene : this.sunsetEnabled ? this.sunsetGallery!.scene : this.scene), (this.cyberEnabled ? this.cyberGallery!.camera : this.sunsetEnabled ? this.sunsetGallery!.camera : this.camera));
       this.bloom.render(this.renderer, this.renderTarget.texture);
 
       this.renderer.setRenderTarget(null);
       this.renderer.render(this.postScene, this.postCamera);
     } else {
-      this.renderer.render(this.scene, this.camera);
+      this.renderer.render((this.cyberEnabled ? this.cyberGallery!.scene : this.sunsetEnabled ? this.sunsetGallery!.scene : this.scene), (this.cyberEnabled ? this.cyberGallery!.camera : this.sunsetEnabled ? this.sunsetGallery!.camera : this.camera));
     }
   };
 
@@ -1201,6 +1283,8 @@ export class SceneManager {
     this.textureCache.forEach(t => t.dispose());
     this.textureCache.clear();
     this.skyEnvironment?.dispose();
+    this.sunsetGallery?.dispose();
+    this.cyberGallery?.dispose();
     this.particles.dispose();
     this.bloom.dispose();
     this.postMaterial.dispose();

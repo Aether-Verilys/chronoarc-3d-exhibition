@@ -1,0 +1,65 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1025; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+#app { position: fixed; inset: 0; }
+#app canvas { cursor: grab; }
+.hud { position: fixed; z-index: 10; color: #fff; user-select: none; pointer-events: none; }
+#hud-top {
+  top: 18px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 24px; align-items: center;
+  background: rgba(20, 10, 40, .55); padding: 10px 22px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.15); backdrop-filter: blur(6px);
+  font-size: 15px; letter-spacing: .5px;
+}
+#hud-top b { color: #ffd54a; font-size: 18px; }
+#modes {
+  top: 70px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px;
+}
+#modes button {
+  pointer-events: auto; cursor: pointer;
+  background: rgba(255,255,255,.08); color: rgba(255,255,255,.75);
+  border: 1px solid rgba(255,255,255,.25); border-radius: 8px;
+  padding: 4px 16px; font-size: 13px; letter-spacing: 1px;
+  transition: background .15s, color .15s;
+}
+#modes button:hover { background: rgba(255,255,255,.18); }
+#modes button.on {
+  background: #ff4fc3; border-color: #ff4fc3;
+  color: #fff; font-weight: 700;
+  box-shadow: 0 0 14px rgba(255,79,195,.6);
+}
+#status {
+  bottom: 96px; left: 50%; transform: translateX(-50%);
+  font-size: 22px; font-weight: 700; letter-spacing: 2px;
+  text-shadow: 0 2px 12px rgba(255, 80, 180, .8);
+  color: #ffe3f3;
+}
+#timer {
+  bottom: 64px; left: 50%; transform: translateX(-50%);
+  font-size: 14px; color: #ffb3d9; display: none;
+}
+#help {
+  bottom: 18px; left: 50%; transform: translateX(-50%);
+  font-size: 13px; color: rgba(255,255,255,.65); text-align: center; line-height: 1.7;
+}
+#help kbd {
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+  border-radius: 5px; padding: 1px 7px; margin: 0 2px; font-family: inherit;
+}
+#coin-btn {
+  position: fixed; z-index: 11; right: 26px; bottom: 26px;
+  pointer-events: auto; cursor: pointer;
+  background: linear-gradient(160deg, #ffd54a, #ff9d3f);
+  color: #5a2d00; font-weight: 800; font-size: 16px; letter-spacing: 1px;
+  border: none; border-radius: 50px; padding: 14px 26px;
+  box-shadow: 0 6px 24px rgba(255, 170, 40, .45), inset 0 -3px 0 rgba(0,0,0,.15);
+  transition: transform .08s;
+}
+#coin-btn:active { transform: scale(.94); }
+#banner {
+  top: 38%; left: 50%; transform: translate(-50%,-50%) scale(0);
+  font-size: 72px; font-weight: 900; letter-spacing: 6px;
+  color: #fff; text-shadow: 0 0 30px #ff4fc3, 0 0 60px #ff4fc3;
+  transition: transform .25s cubic-bezier(.2, 2.2, .4, 1);
+}
+#banner.show { transform: translate(-50%,-50%) scale(1); }
+#banner.miss { color: #9fb2c8; text-shadow: 0 0 24px rgba(160,180,210,.6); font-size: 44px; }

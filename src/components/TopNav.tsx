@@ -12,6 +12,10 @@ interface TopNavProps {
   onToggleOptics: () => void;
   onAddGlb: () => void;
   onCycleTheme: () => void;
+  isSunsetEnabled: boolean;
+  onToggleSunset: () => void;
+  isCyberEnabled: boolean;
+  onToggleCyber: () => void;
   isSkyEnabled: boolean;
   onToggleSky: () => void;
   tiers: TierInfo[];
@@ -29,6 +33,10 @@ export const TopNav: React.FC<TopNavProps> = ({
   onToggleOptics,
   onAddGlb,
   onCycleTheme,
+  isSunsetEnabled,
+  onToggleSunset,
+  isCyberEnabled,
+  onToggleCyber,
   isSkyEnabled,
   onToggleSky,
   tiers,
@@ -87,6 +95,8 @@ export const TopNav: React.FC<TopNavProps> = ({
         <button onClick={onAddGlb} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg">
           <Plus className="w-3.5 h-3.5" /> 添加模型
         </button>
+        <button onClick={onToggleSunset} aria-pressed={isSunsetEnabled} className={`px-3 py-2 rounded-lg border text-xs font-medium whitespace-nowrap ${isSunsetEnabled ? 'bg-indigo-100 border-indigo-300 text-indigo-900' : 'bg-slate-100 border-slate-200 text-slate-700'}`}>暮光展厅</button>
+        <button onClick={onToggleCyber} aria-pressed={isCyberEnabled} className={`px-3 py-2 rounded-lg border text-xs font-medium whitespace-nowrap ${isCyberEnabled ? 'bg-pink-100 border-pink-300 text-pink-900' : 'bg-slate-100 border-slate-200 text-slate-700'}`}>抓娃娃</button>
         <button onClick={onToggleSky} aria-pressed={isSkyEnabled} title={isSkyEnabled ? '返回背景场景' : '切换手办展厅'} className={`flex items-center gap-1.5 px-2 py-2 rounded-lg border text-xs font-medium ${isSkyEnabled ? 'bg-sky-100 border-sky-300 text-sky-800' : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-sky-50'}`}>
           <CloudSun className="w-4 h-4" /><span className="hidden sm:inline">手办展厅</span>
         </button>

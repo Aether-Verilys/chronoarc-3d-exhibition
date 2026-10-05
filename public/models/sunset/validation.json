@@ -1,0 +1,18 @@
+{
+  "window.glb": {
+    "triangles": 9145,
+    "bytes": 2706504
+  },
+  "glass.glb": {
+    "triangles": 8796,
+    "bytes": 2654888
+  },
+  "plant.glb": {
+    "triangles": 8923,
+    "bytes": 2258048
+  },
+  "platform.glb": {
+    "triangles": 7785,
+    "bytes": 1952888
+  }
+}

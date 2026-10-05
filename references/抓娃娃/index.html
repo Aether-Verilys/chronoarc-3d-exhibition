@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>抓娃娃模拟器 · Claw Machine</title>
+<link rel="icon" href="./assets/marquee.svg">
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./assets/lib/three.module.js",
+    "three/addons/": "./assets/lib/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div class="hud" id="hud-top">
+  <span>🪙 币 <b id="coins">0</b></span>
+  <span>🏆 战利品 <b id="prizes">0</b></span>
+  <span>💗 剩余娃娃 <b id="left">0</b></span>
+</div>
+<div class="hud" id="modes">
+  <button data-mode="easy">简单</button>
+  <button data-mode="normal">普通</button>
+  <button data-mode="hard">困难</button>
+</div>
+<div class="hud" id="status">INSERT COIN</div>
+<div class="hud" id="timer"></div>
+<div class="hud" id="banner"></div>
+<div class="hud" id="help">
+  <kbd>C</kbd> 投币 &nbsp;·&nbsp; <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动抓钩 &nbsp;·&nbsp; <kbd>SPACE</kbd> 下钩 &nbsp;·&nbsp; 拖拽旋转视角
+</div>
+<button id="coin-btn">投币 (C)</button>
+
+<script type="module" src="./game.js"></script>
+</body>
+</html>

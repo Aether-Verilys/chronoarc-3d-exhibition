@@ -1,0 +1,22 @@
+{
+  "platform": {
+    "task_id": "15cf372a-e896-4476-a42e-064f74876ca8",
+    "reference": "references/sunset/platform.png",
+    "face_limit": 8500
+  },
+  "window": {
+    "task_id": "c703ad39-8502-43fa-9426-454e01bab1d7",
+    "reference": "references/sunset/window.png",
+    "face_limit": 8500
+  },
+  "glass": {
+    "task_id": "2e2adbcc-ace9-4728-bd86-ab09b9d0c5e0",
+    "reference": "references/sunset/glass.png",
+    "face_limit": 8500
+  },
+  "plant": {
+    "task_id": "54f9cd33-dc8e-4645-8ee8-17d87111209a",
+    "reference": "references/sunset/plant.png",
+    "face_limit": 8500
+  }
+}

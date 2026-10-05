@@ -16,6 +16,9 @@ export default function App() {
   const [models, setModels] = useState<ModelDefinition[]>(MODEL_CATALOG);
   const [activeModel, setActiveModel] = useState<ModelDefinition>(MODEL_CATALOG[47] || MODEL_CATALOG[0]);
   const [currentPreset, setCurrentPreset] = useState<CameraPreset>('front');
+  const [isSunsetEnabled, setIsSunsetEnabled] = useState(false);
+  const [isCyberEnabled, setIsCyberEnabled] = useState(false);
+  const [galleryLoading, setGalleryLoading] = useState(false);
   const [isSkyEnabled, setIsSkyEnabled] = useState(false);
   const [isOpticsOpen, setIsOpticsOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -134,6 +137,7 @@ export default function App() {
   };
 
   const handleThemeChange = (id: string) => {
+    setIsSunsetEnabled(false);
     setIsSkyEnabled(false);
     sceneManagerRef.current?.setSkyEnabled(false);
     setThemeId(id);
@@ -228,9 +232,31 @@ export default function App() {
         onToggleOptics={() => setIsOpticsOpen(v => !v)}
         onAddGlb={() => glbInputRef.current?.click()}
         onCycleTheme={handleCycleTheme}
-        isSkyEnabled={isSkyEnabled}
+        isSunsetEnabled={isSunsetEnabled}
+        onToggleSunset={async () => {
+          const enabled = !isSunsetEnabled;
+          setIsSunsetEnabled(enabled);
+          setIsCyberEnabled(false);
+          setGalleryLoading(enabled);
+          try { await sceneManagerRef.current?.setSunsetEnabled(enabled); }
+          catch { setToastMessage('第二展厅资源加载失败，请重试'); }
+          finally { setGalleryLoading(false); }
+        }}
+        isCyberEnabled={isCyberEnabled}
+        onToggleCyber={async () => {
+          const enabled = !isCyberEnabled;
+          setIsCyberEnabled(enabled);
+          setIsSunsetEnabled(false);
+          setGalleryLoading(enabled);
+          try { await sceneManagerRef.current?.setCyberEnabled(enabled); }
+          catch { setToastMessage('抓娃娃机资源加载失败，请重试'); }
+          finally { setGalleryLoading(false); }
+        }}
+        isSkyEnabled={isSkyEnabled && !isSunsetEnabled && !isCyberEnabled}
         onToggleSky={() => {
-          const enabled = !isSkyEnabled;
+          setIsSunsetEnabled(false);
+          setIsCyberEnabled(false);
+          const enabled = isSunsetEnabled || isCyberEnabled || !isSkyEnabled;
           sceneManagerRef.current?.setSkyEnabled(enabled);
           setIsSkyEnabled(enabled);
         }}
@@ -267,6 +293,7 @@ export default function App() {
         </OpticsControls>
       )}
 
+      {galleryLoading && <div role="status" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 rounded-full bg-white/90 px-5 py-2 text-sm shadow-lg">正在启动抓娃娃机…</div>}
       {/* Active iOS Drag Notification Banner */}
       {isDraggingModel && (
         <div className="fixed top-18 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/90 text-white backdrop-blur-md shadow-2xl border border-white/20 text-xs font-medium pointer-events-none">
