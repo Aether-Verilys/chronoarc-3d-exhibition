@@ -70,6 +70,7 @@ export default function App() {
       previewRequestRef.current += 1;
       window.clearTimeout(backpackPulseTimer);
       setCollectedPrizes([]);
+      setIsBackpackOpen(false);
       setSelectedPrize(null);
       setLoadingPrizeId(null);
       setPrizePreviewError(null);
@@ -176,7 +177,7 @@ export default function App() {
   };
 
   const handleThemeChange = (id: string) => {
-    handleClearPrizePreview();
+    handleCloseBackpack();
     setIsCyberEnabled(false);
     setIsSunsetEnabled(false);
     setIsSkyEnabled(false);
@@ -307,7 +308,7 @@ export default function App() {
         isSunsetEnabled={isSunsetEnabled}
         onToggleSunset={async () => {
           const enabled = !isSunsetEnabled;
-          handleClearPrizePreview();
+          handleCloseBackpack();
           setIsSunsetEnabled(enabled);
           setIsCyberEnabled(false);
           setGalleryLoading(enabled);
@@ -318,7 +319,7 @@ export default function App() {
         isCyberEnabled={isCyberEnabled}
         onToggleCyber={async () => {
           const enabled = !isCyberEnabled;
-          handleClearPrizePreview();
+          handleCloseBackpack();
           setIsCyberEnabled(enabled);
           setIsSunsetEnabled(false);
           setGalleryLoading(enabled);
@@ -328,7 +329,7 @@ export default function App() {
         }}
         isSkyEnabled={isSkyEnabled && !isSunsetEnabled && !isCyberEnabled}
         onToggleSky={() => {
-          handleClearPrizePreview();
+          handleCloseBackpack();
           setIsSunsetEnabled(false);
           setIsCyberEnabled(false);
           const enabled = isSunsetEnabled || isCyberEnabled || !isSkyEnabled;
@@ -341,11 +342,11 @@ export default function App() {
         modelCount={models.length}
       />
 
-      <button type="button" onClick={() => setIsBackpackOpen(true)} aria-label={`打开背包，已有 ${collectedPrizes.length} 件奖品`} className={`fixed top-20 right-5 z-30 flex items-center gap-2 rounded-xl border border-amber-300/50 bg-slate-950/80 px-3 py-2 text-sm font-semibold text-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.15)] backdrop-blur-xl hover:bg-amber-400/15 ${backpackPulse ? 'animate-bounce ring-2 ring-amber-300' : ''}`}>
+      {isCyberEnabled && <button type="button" onClick={() => setIsBackpackOpen(true)} aria-label={`打开背包，已有 ${collectedPrizes.length} 件奖品`} className={`fixed top-20 right-5 z-30 flex items-center gap-2 rounded-xl border border-amber-300/50 bg-slate-950/80 px-3 py-2 text-sm font-semibold text-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.15)] backdrop-blur-xl hover:bg-amber-400/15 ${backpackPulse ? 'animate-bounce ring-2 ring-amber-300' : ''}`}>
         <Backpack className="h-4 w-4" /> 背包 <span className="rounded-full bg-amber-400/20 px-1.5 text-xs text-amber-100">{collectedPrizes.length}</span>
-      </button>
+      </button>}
 
-      {isBackpackOpen && (
+      {isCyberEnabled && isBackpackOpen && (
         <div className={`fixed inset-0 z-50 flex p-3 sm:p-5 ${selectedPrize ? 'pointer-events-none items-end justify-center lg:items-center lg:justify-end' : 'items-center justify-center bg-slate-950/55 backdrop-blur-sm'}`} role="dialog" aria-modal={!selectedPrize} aria-label="奖品背包">
           <div className={`relative flex w-full flex-col overflow-hidden rounded-3xl border border-cyan-300/20 bg-[#0b1022]/95 shadow-[0_24px_80px_rgba(0,0,0,0.55)] pointer-events-auto ${selectedPrize ? 'max-h-[28vh] lg:max-h-[78vh] lg:w-64 xl:w-72' : 'max-h-[88vh] max-w-3xl'}`}>
             <div className="flex items-center justify-between border-b border-slate-700/80 px-5 py-4">
@@ -371,7 +372,7 @@ export default function App() {
         </div>
       )}
 
-      {selectedPrize && <div className="fixed top-20 left-5 z-40 flex flex-col items-start gap-2">
+      {isCyberEnabled && selectedPrize && <div className="fixed top-20 left-5 z-40 flex flex-col items-start gap-2">
         <div className="flex gap-2">
           <button type="button" onClick={handleClearPrizePreview} className="rounded-xl bg-slate-950/85 px-3 py-2.5 text-sm font-semibold text-cyan-100 shadow-xl border border-cyan-300/30">结束查看</button>
           <button type="button" onClick={() => sceneManagerRef.current?.resetPrizePreview()} className="flex items-center gap-1.5 rounded-xl bg-slate-900/85 px-3 py-2.5 text-sm text-slate-200 shadow-xl border border-slate-600/70"><RotateCcw className="h-4 w-4" /> 重置视角</button>
