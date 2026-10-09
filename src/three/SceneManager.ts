@@ -9,6 +9,7 @@ import { ParticleSystem } from './ParticleSystem';
 import { LensDistortionShader } from '../shaders/LensDistortionShader';
 import { soundEffects } from '../audio/soundEffects';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import type { CollectedPrize } from '../types/prizes';
 
 export interface MatrixSlot {
   slotIndex: number;
@@ -43,9 +44,30 @@ export class SceneManager {
   private cyberEnabled = false;
   private sunsetEnabled = false;
   private sunsetPointer: number | null = null;
+  private disposeSunsetGallery() {
+    if (!this.sunsetGallery) return;
+    this.sunsetGallery.dispose();
+    this.sunsetGallery = null;
+  }
+
+  private disposeCyberGallery() {
+    if (!this.cyberGallery) return;
+    const gallery = this.cyberGallery;
+    this.cyberGallery = null;
+    gallery.dispose();
+    this.onPrizesReset?.();
+  }
+
   public async setSunsetEnabled(enabled: boolean) {
     this.exitModelFocus();
-    if(enabled && !this.sunsetGallery) this.sunsetGallery = new SunsetGallery(this.renderer);
+    if (!enabled) {
+      this.sunsetEnabled = false;
+      this.disposeSunsetGallery();
+      this.updateShaderUniforms();
+      return;
+    }
+    this.disposeCyberGallery();
+    if(!this.sunsetGallery) this.sunsetGallery = new SunsetGallery(this.renderer);
     this.sunsetEnabled = enabled;
     this.cyberEnabled = false;
     this.renderer.shadowMap.enabled = enabled;
@@ -59,13 +81,28 @@ export class SceneManager {
   }
   public async setCyberEnabled(enabled: boolean) {
     this.exitModelFocus();
-    if (enabled && !this.cyberGallery) this.cyberGallery = new CyberGallery(this.renderer);
+    if (!enabled) {
+      this.cyberEnabled = false;
+      this.disposeCyberGallery();
+      this.renderer.toneMappingExposure = this.skyEnabled ? 0.78 : 1.05;
+      this.updateShaderUniforms();
+      return;
+    }
+    this.disposeSunsetGallery();
+    if (!this.cyberGallery) {
+      this.onPrizesReset?.();
+      this.cyberGallery = new CyberGallery(this.renderer);
+    }
+    const gallery = this.cyberGallery;
+    gallery.onPrizeCollected = (prize) => {
+      if (!this.isDestroyed && this.cyberGallery === gallery) this.onPrizeCollected?.(prize);
+    };
     this.cyberEnabled = enabled;
     this.sunsetEnabled = false;
     this.renderer.shadowMap.enabled = enabled;
     this.renderer.toneMappingExposure = enabled ? 0.9 : 1.05;
     this.updateShaderUniforms();
-    if (enabled) { this.cyberGallery!.resize(this.container.clientWidth, this.container.clientHeight); await this.cyberGallery!.ready; }
+    if (enabled) { gallery.resize(this.container.clientWidth, this.container.clientHeight); await gallery.ready; }
   }
 
   private skyEnvironment: ReturnType<typeof createSkyEnvironment> | null = null;
@@ -73,6 +110,8 @@ export class SceneManager {
   public setSkyEnabled(enabled: boolean) {
     void this.setSunsetEnabled(false);
     this.cyberEnabled = false;
+    this.disposeCyberGallery();
+    this.updateShaderUniforms();
     if (enabled && !this.skyEnvironment) {
       this.skyEnvironment = createSkyEnvironment(this.renderer);
       this.skyEnvironment.updateSlots(this.slots);
@@ -192,6 +231,14 @@ export class SceneManager {
   public onDragModeChange?: (isDragging: boolean, draggedName?: string) => void;
   public onModelReorder?: (reorderedModels: ModelDefinition[]) => void;
   public onModelFocusChange?: (focused: boolean, model?: ModelDefinition) => void;
+  public onPrizeCollected?: (prize: CollectedPrize) => void;
+  public onPrizesReset?: () => void;
+  public async focusPrize(instanceId: string): Promise<boolean> {
+    if (!this.cyberEnabled || !this.cyberGallery) return false;
+    return this.cyberGallery.focusPrize(instanceId);
+  }
+  public clearPrizePreview() { this.cyberGallery?.clearPrizePreview(); }
+  public resetPrizePreview() { this.cyberGallery?.resetPrizePreview(); }
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -1134,7 +1181,7 @@ export class SceneManager {
     u.uChromatic.value = this.optics.chromatic;
     u.uVignette.value = this.optics.vignette;
     u.uEnabled.value = (this.sunsetEnabled || this.cyberEnabled) ? 0 : (this.optics.enableShader ? 1.0 : 0.0);
-    u.uBloomStrength.value = (this.sunsetEnabled || this.cyberEnabled) ? 0.22 : 0.32;
+    u.uBloomStrength.value = this.cyberEnabled ? 1.15 : (this.sunsetEnabled ? 0.32 : 0.32);
   }
 
   public getOptics(): OpticsSettings {
@@ -1235,6 +1282,7 @@ export class SceneManager {
     }
 
     if (this.sunsetEnabled || this.cyberEnabled) (this.cyberEnabled ? this.cyberGallery : this.sunsetGallery)?.update(delta, time);
+    this.postMaterial.uniforms.uBackgroundBlur.value = this.cyberEnabled && this.cyberGallery?.isPrizePreviewing() ? 2.0 : 0;
 
     if (this.renderTarget) {
       this.renderer.setRenderTarget(this.renderTarget);
@@ -1246,6 +1294,9 @@ export class SceneManager {
     } else {
       this.renderer.render((this.cyberEnabled ? this.cyberGallery!.scene : this.sunsetEnabled ? this.sunsetGallery!.scene : this.scene), (this.cyberEnabled ? this.cyberGallery!.camera : this.sunsetEnabled ? this.sunsetGallery!.camera : this.camera));
     }
+    // Draw the inspected prize with the existing renderer after background
+    // post-processing, so cabinet bloom cannot wash out its surface detail.
+    if (this.cyberEnabled) this.cyberGallery?.renderPrizePreview(this.renderer);
   };
 
   public dispose() {
@@ -1284,7 +1335,7 @@ export class SceneManager {
     this.textureCache.clear();
     this.skyEnvironment?.dispose();
     this.sunsetGallery?.dispose();
-    this.cyberGallery?.dispose();
+    this.disposeCyberGallery();
     this.particles.dispose();
     this.bloom.dispose();
     this.postMaterial.dispose();

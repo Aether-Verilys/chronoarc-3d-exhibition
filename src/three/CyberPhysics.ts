@@ -1,10 +1,12 @@
 import * as CANNON from 'cannon-es';
 
+export const WORLD_GRAVITY = 9.8;
+
 /** Sphere proxies keep detailed GLBs inexpensive to simulate. */
 export class CyberPhysics {
   // The visible playfield is the top of the raised lower cabinet section.
   private readonly floorY = 3.50;
-  readonly world = new CANNON.World({ gravity: new CANNON.Vec3(0, -14, 0), allowSleep: true });
+  readonly world = new CANNON.World({ gravity: new CANNON.Vec3(0, -WORLD_GRAVITY, 0), allowSleep: true });
   private material = new CANNON.Material('cyber-surfaces');
 
   constructor() {

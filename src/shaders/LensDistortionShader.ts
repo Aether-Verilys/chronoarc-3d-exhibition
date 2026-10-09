@@ -9,6 +9,7 @@ export const LensDistortionShader = {
   uniforms: {
     tBloom: { value: null as THREE.Texture | null },
     uBloomStrength: { value: 0.32 },
+    uBackgroundBlur: { value: 0.0 },
     tDiffuse: { value: null as THREE.Texture | null },
     uResolution: { value: new THREE.Vector2(1, 1) },
     uStretchX: { value: 1.35 },     // Horizontal anamorphic stretch
@@ -32,6 +33,7 @@ export const LensDistortionShader = {
     uniform sampler2D tDiffuse;
     uniform sampler2D tBloom;
     uniform float uBloomStrength;
+    uniform float uBackgroundBlur;
     uniform vec2 uResolution;
     uniform float uStretchX;
     uniform float uStretchY;
@@ -65,7 +67,20 @@ export const LensDistortionShader = {
 
     void main() {
       if (uEnabled < 0.5) {
-        gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloomStrength, 1.0);
+        vec3 background = texture2D(tDiffuse, vUv).rgb;
+        if (uBackgroundBlur > 0.0) {
+          vec2 stepUv = vec2(uBackgroundBlur) / uResolution;
+          background *= 0.25;
+          background += texture2D(tDiffuse, vUv + vec2(stepUv.x, 0.0)).rgb * 0.125;
+          background += texture2D(tDiffuse, vUv - vec2(stepUv.x, 0.0)).rgb * 0.125;
+          background += texture2D(tDiffuse, vUv + vec2(0.0, stepUv.y)).rgb * 0.125;
+          background += texture2D(tDiffuse, vUv - vec2(0.0, stepUv.y)).rgb * 0.125;
+          background += texture2D(tDiffuse, vUv + stepUv).rgb * 0.0625;
+          background += texture2D(tDiffuse, vUv - stepUv).rgb * 0.0625;
+          background += texture2D(tDiffuse, vUv + vec2(stepUv.x, -stepUv.y)).rgb * 0.0625;
+          background += texture2D(tDiffuse, vUv + vec2(-stepUv.x, stepUv.y)).rgb * 0.0625;
+        }
+        gl_FragColor = vec4(background + texture2D(tBloom, vUv).rgb * uBloomStrength, 1.0);
         return;
       }
 

@@ -1,10 +1,23 @@
 import * as THREE from 'three';
 import type { Body } from 'cannon-es';
 import { CyberPhysics } from './CyberPhysics';
-import { SunsetGallery } from './SunsetGallery';
+import { PrizeDelivery, PRIZE_CHUTE } from './PrizeDelivery';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { CollectedPrize, PRIZE_CATALOG } from '../types/prizes';
 
 /** Cyberpunk weapon-wall room with lightweight rigid-body drop interaction. */
-export class CyberGallery extends SunsetGallery {
+export class CyberGallery {
+  public onPrizeCollected?: (prize: CollectedPrize) => void;
+  readonly scene = new THREE.Scene();
+  readonly camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
+  readonly ready: Promise<void>;
+  private disposed = false;
+  private resources = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
+  private gltfLoader = new GLTFLoader();
+  private assetCache = new Map<string, Promise<THREE.Group>>();
+  private environment: THREE.WebGLRenderTarget | null = null;
+  private interactive = new THREE.Group();
   private physics = new CyberPhysics();
   private bodies = new Map<THREE.Object3D, { body: Body; offset: THREE.Vector3 }>();
   private physicsDisposed = false;
@@ -21,17 +34,65 @@ export class CyberGallery extends SunsetGallery {
   private viewYaw = 0;
   private viewPitch = 0;
   private viewDistance = 25;
+  private clawX = 0;
+  private clawZ = 0;
+  private clawState: 'ready' | 'down' | 'grab' | 'up' | 'return' | 'release' = 'ready';
+  private clawStateTime = 0;
+  private clawY = 2.55;
+  private clawHeld: THREE.Object3D | null = null;
+  private clawHead: THREE.Group | null = null;
+  private clawCarriage: THREE.Mesh | null = null;
+  private clawCable: THREE.Mesh | null = null;
+  private clawProngs: Array<{ seg1: THREE.Group; seg2: THREE.Group }> = [];
+  // Local to clawGroup; the carriage, cable top and head all use the same
+  // Z datum so the hanging rod stays centered over the claw.
+  private clawHeadPosition = new THREE.Vector3(0, 2.55, 0);
+  private clawHeadVelocity = new THREE.Vector3();
+  private clawVx = 0;
+  private clawVz = 0;
+  private clawOpen = 1;
+  private clawOpenTarget = 1;
+  private readonly clawChute = new THREE.Vector2(-1.55, 0.95);
+  private clawDeliveries: Array<{ model: THREE.Object3D; motion: PrizeDelivery; offset: THREE.Vector3 }> = [];
+  private clawPrizesOnTray: Array<{ model: THREE.Object3D; elapsed: number }> = [];
+  private collectedPrizes = new Map<string, CollectedPrize>();
+  private prizePreviewScene = new THREE.Scene();
+  private prizePreviewRoot = new THREE.Group();
+  private prizePreviewModel: THREE.Object3D | null = null;
+  private prizePreviewMode = false;
+  private prizePreviewRequest = 0;
+  // Rotation is kept on the preview model rather than the gallery camera. This
+  // leaves the machine framing (and the backpack UI) stable while the user
+  // drags across the canvas to inspect a prize from every angle.
+  private prizePreviewYaw = 0;
+  private prizePreviewPitch = 0;
+  private prizePreviewScale = 1;
+  private prizePreviewRadius = 1;
+  private clawKeys = new Set<string>();
+  private clawKeyDown = (e: KeyboardEvent) => { if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) { e.preventDefault(); if (this.prizePreviewMode) return; this.clawKeys.add(e.code); if (e.code === 'Space' && this.clawState === 'ready') { this.clawState = 'down'; this.clawStateTime = 0; } } };
+  private clawKeyUp = (e: KeyboardEvent) => { this.clawKeys.delete(e.code); };
   constructor(renderer: THREE.WebGLRenderer) {
-    super(renderer);
+    this.scene.add(this.interactive);
+    this.prizePreviewScene.add(this.prizePreviewRoot);
+    this.prizePreviewRoot.visible = false;
     // Match the reference claw-machine framing.
     // Pull back to frame the enlarged cabinet and its extended prize bay.
     this.camera.position.set(0, 8.2, 25);
     this.camera.lookAt(0, 5.4, 0);
     // Replace the warm gallery mood with a dark gunmetal workshop shell.
-    this.scene.background = new THREE.Color('#241532');
+    // Match the reference room: deep purple backdrop, soft distance fog and
+    // a compact studio environment for convincing glass/metal reflections.
+    this.scene.background = new THREE.Color(0x241532);
+    this.scene.fog = new THREE.Fog(0x241532, 14, 30);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    this.environment = pmrem.fromScene(new RoomEnvironment(), 0.04);
+    pmrem.dispose();
+    this.scene.environment = this.environment.texture;
     this.scene.environmentIntensity = 0.18;
+    this.prizePreviewScene.environment = this.environment.texture;
+    this.prizePreviewScene.environmentIntensity = 0.3;
 
-    const metal = new THREE.MeshStandardMaterial({ color: 0x101820, roughness: 0.72, metalness: 0.88 });
+    const metal = new THREE.MeshStandardMaterial({ color: 0x101820, roughness: 0.72, metalness: 0.88, envMapIntensity: 0.55 });
     const panel = new THREE.MeshStandardMaterial({ color: 0x1a2630, roughness: 0.58, metalness: 0.92 });
     const black = new THREE.MeshStandardMaterial({ color: 0x05090d, roughness: 0.8, metalness: 0.8 });
     const cyan = new THREE.MeshBasicMaterial({ color: 0x27d9ff, toneMapped: false });
@@ -40,6 +101,7 @@ export class CyberGallery extends SunsetGallery {
 
     const addBox = (size: [number, number, number], pos: [number, number, number], mat: THREE.Material) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), mat);
+      this.resources.add(mesh.geometry); this.resources.add(mat);
       mesh.userData.cyberShell = true;
       mesh.position.set(...pos);
       mesh.castShadow = true;
@@ -142,8 +204,9 @@ export class CyberGallery extends SunsetGallery {
       }
     }
 
-    // The base gallery is shared for interaction and loading. Once its assets
-    // finish loading, keep only the interactive exhibits and this metal shell.
+    // Load only prize models owned by this room. The balcony room is entirely
+    // independent and is never constructed or retained here.
+    this.ready = this.loadPrizeModels();
     void this.ready.then(() => {
       if (this.physicsDisposed) return;
       // Models begin on the foreground bench, ready to be picked up.
@@ -173,18 +236,6 @@ export class CyberGallery extends SunsetGallery {
         this.bodies.set(model, { body, offset });
       });
       this.scene.traverse(object => {
-        if (!(object instanceof THREE.Mesh)) return;
-        let parent: THREE.Object3D | null = object;
-        let inInteractive = false;
-        while (parent) {
-          if (parent === this.interactive) { inInteractive = true; break; }
-          parent = parent.parent;
-        }
-        let clawPart: THREE.Object3D | null = object;
-        while (clawPart && !clawPart.userData.clawShell) clawPart = clawPart.parent;
-        if (!inInteractive && !object.userData.cyberShell && !clawPart) object.visible = false;
-      });
-      this.scene.traverse(object => {
         if (object instanceof THREE.Light) object.intensity *= 0.18;
       });
       this.scene.add(new THREE.HemisphereLight(0x4c718c, 0x03060a, 0.8));
@@ -193,6 +244,58 @@ export class CyberGallery extends SunsetGallery {
       this.scene.add(key);
     }).catch(() => { /* SceneManager reports asset loading failures. */ });
     this.setupClawMachine();
+    window.addEventListener('keydown', this.clawKeyDown, { passive: false });
+    window.addEventListener('keyup', this.clawKeyUp);
+  }
+
+  private async loadPrizeModels() {
+    const prizeIds = ['ramen', 'burger', 'donut', 'sushi', 'cake', 'pizza'] as const;
+    const sources = await Promise.all([
+      'food/ramen', 'food/burger', 'food/donut', 'food/sushi', 'food/cake', 'food/pizza',
+    ].map(name => this.loadAsset(name)));
+    if (this.disposed) return;
+    for (let index = 0; index < 18; index++) {
+      const source = sources[index % sources.length].clone(true);
+      const bounds = new THREE.Box3().setFromObject(source);
+      const size = bounds.getSize(new THREE.Vector3());
+      const scale = Math.min(1.35 / Math.max(size.y, 0.001), 1.35 / Math.max(size.x, size.z, 0.001));
+      source.scale.multiplyScalar(scale);
+      source.traverse(object => { if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; } });
+      const wrapper = new THREE.Group();
+      wrapper.add(source);
+      wrapper.userData.prizeId = prizeIds[index % prizeIds.length];
+      wrapper.userData.spin = 0;
+      wrapper.userData.bounce = 0;
+      this.interactive.add(wrapper);
+    }
+  }
+
+  private loadAsset(name: string): Promise<THREE.Group> {
+    const cached = this.assetCache.get(name);
+    if (cached) return cached;
+    const loading = this.gltfLoader.loadAsync(`/models/${name}.glb`).then(gltf => {
+      const resources = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
+      gltf.scene.traverse(object => {
+        if (!(object instanceof THREE.Mesh)) return;
+        resources.add(object.geometry);
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach(material => {
+          resources.add(material);
+          Object.values(material).forEach(value => { if (value instanceof THREE.Texture) resources.add(value); });
+        });
+      });
+      if (this.disposed) {
+        resources.forEach(resource => resource.dispose());
+        throw new Error('Gallery disposed');
+      }
+      resources.forEach(resource => this.resources.add(resource));
+      return gltf.scene;
+    }).catch(error => {
+      this.assetCache.delete(name);
+      throw error;
+    });
+    this.assetCache.set(name, loading);
+    return loading;
   }
 
   private setupClawMachine() {
@@ -210,29 +313,113 @@ export class CyberGallery extends SunsetGallery {
     box(4.8,.82,.3,dark,0,5.78,.55);
     const sign=new THREE.Mesh(new THREE.PlaneGeometry(4.6,.76),new THREE.MeshBasicMaterial({color:0xff4fc3,toneMapped:false})); sign.position.set(0,5.78,.72); sign.userData.clawShell=true; group.add(sign);
     for(let i=0;i<9;i++){const b=new THREE.Mesh(new THREE.SphereGeometry(.08,10,8),new THREE.MeshBasicMaterial({color:i%2?0xff4fc3:0xffd54a}));b.position.set(-2+i*.5,5.78,.8);b.userData.clawShell=true;group.add(b);}
-    box(3.9,.12,.12,0xb8c0cc,0,4.55,.1); box(.08,2,.08,0xb8c0cc,0,3.55,.1);
-    const claw=new THREE.Group(); claw.userData.clawShell=true; claw.position.set(0,2.55,.1); group.add(claw);
-    claw.add(new THREE.Mesh(new THREE.SphereGeometry(.18,16,12),new THREE.MeshStandardMaterial({color:0xffd54a,emissive:0x884400,emissiveIntensity:.6})));
-    for(let i=0;i<3;i++){const a=new THREE.Mesh(new THREE.CylinderGeometry(.035,.06,.48,10),new THREE.MeshStandardMaterial({color:0xb8c0cc,metalness:.8}));a.position.set(Math.cos(i*Math.PI*2/3)*.14,-.25,Math.sin(i*Math.PI*2/3)*.14);a.rotation.z=Math.cos(i*Math.PI*2/3)*.42;a.rotation.x=Math.sin(i*Math.PI*2/3)*.42;claw.add(a);}
+
+    // Reference internal prize chute: a dark opening in the playfield with a lit rim.
+    const chuteX = -1.55, chuteZ = .95;
+    const chuteHole = new THREE.Mesh(new THREE.CircleGeometry(.55, 40), new THREE.MeshBasicMaterial({ color: 0x08040d, toneMapped: false }));
+    chuteHole.rotation.x = -Math.PI / 2; chuteHole.position.set(chuteX, .015, chuteZ); chuteHole.userData.clawShell = true; group.add(chuteHole);
+    const chuteRing = new THREE.Mesh(new THREE.TorusGeometry(.59, .045, 12, 40), new THREE.MeshStandardMaterial({ color: 0xffd54a, metalness: .75, roughness: .25, emissive: 0x664400, emissiveIntensity: .55 }));
+    chuteRing.rotation.x = -Math.PI / 2; chuteRing.position.set(chuteX, .035, chuteZ); chuteRing.userData.clawShell = true; group.add(chuteRing);
+    const chuteGlow = new THREE.PointLight(0xffb52e, 2.8, 2.6, 2); chuteGlow.position.set(chuteX, .25, chuteZ); group.add(chuteGlow);
+
+    // Reference claw: rail, motor carriage, spring cable and three articulated fingers.
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: .8, roughness: .25 });
+    // Keep all gantry parts in one local coordinate frame.  The cable's top,
+    // carriage and claw head must share the same Z origin or the rod appears
+    // to hang beside the claw as soon as it starts moving.
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(3.9, .12, .12), railMat); rail.position.set(0, 4.55, 0); rail.userData.clawShell = true; group.add(rail);
+    const carriage = new THREE.Mesh(new THREE.BoxGeometry(.5, .28, .5), new THREE.MeshStandardMaterial({ color: 0xffd54a, metalness: .5, roughness: .3 }));
+    carriage.position.set(0, 4.55, 0); carriage.userData.clawShell = true; carriage.castShadow = true; group.add(carriage); this.clawCarriage = carriage;
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, 1, 8), new THREE.MeshStandardMaterial({ color: 0x888888, metalness: .8, roughness: .3 }));
+    cable.userData.clawShell = true; group.add(cable); this.clawCable = cable;
+    const claw = new THREE.Group(); this.clawHead = claw; claw.userData.clawShell = true; claw.position.set(0, 2.55, 0); group.add(claw);
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(.16, 16, 12), new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: .85, roughness: .2 })); hub.castShadow = true; claw.add(hub);
+    const armMat = new THREE.MeshStandardMaterial({ color: 0xc8c8d2, metalness: .9, roughness: .22 });
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0x6f6f80, metalness: .9, roughness: .3 });
+    for (let i = 0; i < 3; i++) {
+      const pivot = new THREE.Group(); pivot.rotation.y = (i / 3) * Math.PI * 2; pivot.position.y = -.04;
+      const shoulder = new THREE.Group(); shoulder.position.x = .12;
+      const joint1 = new THREE.Mesh(new THREE.SphereGeometry(.055, 12, 10), jointMat); shoulder.add(joint1);
+      const upper = new THREE.Mesh(new THREE.CylinderGeometry(.03, .04, .42, 10), armMat); upper.position.y = -.21; shoulder.add(upper);
+      const elbow = new THREE.Group(); elbow.position.y = -.42;
+      const joint2 = new THREE.Mesh(new THREE.SphereGeometry(.048, 12, 10), jointMat); elbow.add(joint2);
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(.04, .02, .42, 10), armMat); fore.position.y = -.21; elbow.add(fore);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(.026, .16, 8), jointMat); tip.position.y = -.48; tip.rotation.x = Math.PI; elbow.add(tip);
+      shoulder.add(elbow); pivot.add(shoulder); claw.add(pivot); this.clawProngs.push({ seg1: shoulder, seg2: elbow });
+    }
     box(3.5,.18,1.05,pink,0,.55,2.3);
     const control = new THREE.Group(); control.userData.clawShell = true; control.position.set(0,.68,2.34); group.add(control);
     const joystickBase = new THREE.Mesh(new THREE.CylinderGeometry(.22,.26,.08,20),new THREE.MeshStandardMaterial({color:0x2a2a35,metalness:.7,roughness:.3})); joystickBase.position.x=-.95; joystickBase.userData.clawShell=true; control.add(joystickBase);
     const joystickBall = new THREE.Mesh(new THREE.SphereGeometry(.11,16,12),new THREE.MeshStandardMaterial({color:0xff3355,metalness:.3,roughness:.25,emissive:0x551122,emissiveIntensity:.5})); joystickBall.position.set(-.95,.33,0); joystickBall.userData.clawShell=true; control.add(joystickBall);
     const buttonBase = new THREE.Mesh(new THREE.CylinderGeometry(.17,.2,.08,20),new THREE.MeshStandardMaterial({color:0x333344,metalness:.6,roughness:.3})); buttonBase.position.x=.95; buttonBase.userData.clawShell=true; control.add(buttonBase);
     const button = new THREE.Mesh(new THREE.SphereGeometry(.13,16,12),new THREE.MeshStandardMaterial({color:0xffd54a,emissive:0x996600,emissiveIntensity:1.2})); button.position.set(.95,.16,0); button.userData.clawShell=true; control.add(button);
-    // Front lower body, with the prize outlet inset into its face.
+    // Front lower body, with a recessed prize outlet and a visible path from the inner chute.
     box(4.9,1.55,0.72,0x3a2140,0,-.68,2.18);
-    const outlet = new THREE.Mesh(new THREE.BoxGeometry(1.65,.58,.08),new THREE.MeshStandardMaterial({color:0x090611,roughness:.8,metalness:.2}));
-    outlet.position.set(-1.5,-.65,2.58); outlet.userData.clawShell=true; group.add(outlet);
-    const outletLight = new THREE.Mesh(new THREE.BoxGeometry(1.25,.06,.03),new THREE.MeshBasicMaterial({color:0xffd54a,toneMapped:false}));
-    outletLight.position.set(-1.5,-.34,2.63); outletLight.userData.clawShell=true; group.add(outletLight);
+    const outletX = -1.5;
+    const outlet = new THREE.Mesh(new THREE.BoxGeometry(1.65,.62,.12),new THREE.MeshBasicMaterial({color:0x07030d,toneMapped:false}));
+    outlet.position.set(outletX,-.65,2.58); outlet.userData.clawShell=true; group.add(outlet);
+    const outletTop = box(1.82,.10,.18,0xffd54a,outletX,-.30,2.58); const outletBottom = box(1.82,.10,.18,0xff5fa8,outletX,-1.00,2.58);
+    const outletLeft = box(.10,.80,.18,0xff5fa8,outletX-.86,-.65,2.58); const outletRight = box(.10,.80,.18,0xff5fa8,outletX+.86,-.65,2.58);
+    outletTop.userData.clawShell = outletBottom.userData.clawShell = outletLeft.userData.clawShell = outletRight.userData.clawShell = true;
+    // Short dark tunnel under the playfield visually joins the internal hole to the front opening.
+    // The chute has a shallow ramp, so gravity carries prizes to the front lip.
+    const rampDepth = PRIZE_CHUTE.outletZ - PRIZE_CHUTE.entryZ;
+    const rampDrop = PRIZE_CHUTE.outletFloorY - PRIZE_CHUTE.entryFloorY;
+    const tunnelFloor = box(1.25,.10,Math.hypot(rampDepth,rampDrop),0x12091a,outletX,
+      (PRIZE_CHUTE.entryFloorY + PRIZE_CHUTE.outletFloorY) / 2 - .05,
+      (PRIZE_CHUTE.entryZ + PRIZE_CHUTE.outletZ) / 2);
+    // Positive X rotation lowers the surface as Z moves toward the outlet.
+    tunnelFloor.rotation.x = Math.atan2(-rampDrop, rampDepth);
+    const tunnelLeft = box(.10,.65,1.65,0x24142e,outletX-.64,-.67,1.78);
+    const tunnelRight = box(.10,.65,1.65,0x24142e,outletX+.64,-.67,1.78);
+    tunnelFloor.userData.clawShell = tunnelLeft.userData.clawShell = tunnelRight.userData.clawShell = true;
+    const outletLight = new THREE.Mesh(new THREE.BoxGeometry(1.35,.055,.04),new THREE.MeshBasicMaterial({color:0xffd54a,toneMapped:false}));
+    outletLight.position.set(outletX,-.33,2.68); outletLight.userData.clawShell=true; group.add(outletLight);
+    const tray = box(2.0,.12,1.0,0x171020,outletX,-1.20,3.30);
+    tray.userData.clawShell = true;
+    for (const [x,z,w,d] of [[outletX-1,3.3,.10,1.0],[outletX+1,3.3,.10,1.0],[outletX,2.8,2.0,.10],[outletX,3.8,2.0,.10]] as const) {
+      const rim = box(w,.22,d,0xff5fa8,x,-1.08,z); rim.userData.clawShell = true;
+    }
     this.scene.traverse(o=>{if(o instanceof THREE.Mesh && o.userData.cyberShell)o.visible=false;});
-    this.scene.add(new THREE.HemisphereLight(0xffd9ec,0x2a1a3a,.9)); const key=new THREE.DirectionalLight(0xfff2dd,1.7);key.position.set(4,9,6);this.scene.add(key);
-    const n1=new THREE.PointLight(0xff4fc3,18,12);n1.position.set(-3,4.6,1);const n2=new THREE.PointLight(0x4fc3ff,18,12);n2.position.set(3,4.6,1);this.scene.add(n1,n2);
+    // Keep the functional reference claw visible after hiding the decorative shell meshes.
+    rail.visible = true; carriage.visible = true; cable.visible = true; claw.traverse(o => { o.visible = true; });
+
+    // Two tall neon tubes keep the rear wall readable against the purple fog.
+    // They are added after the shell pass so they remain visible behind the
+    // cabinet, with a soft translucent halo and a small colored point light.
+    for (const [x, color] of [[-10.25, 0xff4fc3], [10.25, 0x4fc3ff]] as const) {
+      const haloMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+      const halo = new THREE.Mesh(new THREE.BoxGeometry(1.15, 13.6, 0.12), haloMaterial);
+      halo.position.set(x, 6.2, -4.62);
+      this.resources.add(halo.geometry); this.resources.add(haloMaterial);
+      this.scene.add(halo);
+      const coreMaterial = new THREE.MeshBasicMaterial({ color, toneMapped: false, fog: false, blending: THREE.AdditiveBlending });
+      const core = new THREE.Mesh(new THREE.BoxGeometry(0.28, 13.2, 0.14), coreMaterial);
+      core.position.set(x, 6.2, -4.68);
+      this.resources.add(core.geometry); this.resources.add(coreMaterial);
+      this.scene.add(core);
+      const hotMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.78, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+      const hot = new THREE.Mesh(new THREE.BoxGeometry(0.075, 12.9, 0.16), hotMaterial);
+      hot.position.set(x, 6.2, -4.76);
+      this.resources.add(hot.geometry); this.resources.add(hotMaterial);
+      this.scene.add(hot);
+      const glow = new THREE.PointLight(color, 42, 17, 2);
+      glow.position.set(x, 6.2, -3.9);
+      this.scene.add(glow);
+    }
+    this.scene.add(new THREE.HemisphereLight(0xffd9ec, 0x2a1a3a, 0.7));
+    const key = new THREE.DirectionalLight(0xfff2dd, 1.4);
+    key.position.set(4, 9, 6);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    Object.assign(key.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6 });
+    this.scene.add(key);
+    const n1 = new THREE.PointLight(0xff4fc3, 12, 12); n1.position.set(-3, 4.6, 1);
+    const n2 = new THREE.PointLight(0x4fc3ff, 12, 12); n2.position.set(3, 4.6, 1);
+    this.scene.add(n1, n2);
   }
 
   update(delta: number, time: number) {
-    super.update(delta, time);
     const target = new THREE.Vector3(0, 5.4, 0);
     const horizontal = Math.cos(this.viewPitch) * this.viewDistance;
     this.camera.position.set(
@@ -241,7 +428,23 @@ export class CyberGallery extends SunsetGallery {
       Math.cos(this.viewYaw) * horizontal,
     );
     this.camera.lookAt(target);
+    if (this.prizePreviewMode) {
+      const direction = target.clone().sub(this.camera.position).normalize();
+      const modelPosition = this.camera.position.clone().addScaledVector(direction, 8.0);
+      this.prizePreviewRoot.position.copy(modelPosition);
+      this.prizePreviewRoot.lookAt(this.camera.position);
+      // Keep the prize fully in frame on narrow viewports, including rotation.
+      const availableWidth = 2 * 8 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * this.camera.aspect;
+      const halfVerticalFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
+      const halfHorizontalFov = Math.atan(Math.tan(halfVerticalFov) * this.camera.aspect);
+      const fitScale = 8 * Math.sin(Math.min(halfVerticalFov, halfHorizontalFov)) * 0.94 / this.prizePreviewRadius;
+      this.prizePreviewRoot.scale.setScalar(Math.min(fitScale, Math.min(1, availableWidth / 6) * this.prizePreviewScale));
+      if (this.prizePreviewModel) {
+        this.prizePreviewModel.rotation.set(this.prizePreviewPitch, this.prizePreviewYaw, 0, 'YXZ');
+      }
+    }
     this.physics.step(delta);
+    this.updateClaw(delta);
     this.bodies.forEach(({ body, offset }, model) => {
       if (model.userData.cyberDragging || model.userData.cyberDock >= 0) return;
       model.quaternion.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
@@ -250,13 +453,216 @@ export class CyberGallery extends SunsetGallery {
     });
   }
 
+  async focusPrize(instanceId: string): Promise<boolean> {
+    const prize = this.collectedPrizes.get(instanceId);
+    if (!prize || this.physicsDisposed) return false;
+    const request = ++this.prizePreviewRequest;
+    let source: THREE.Group;
+    try {
+      source = await this.loadAsset(`food/${prize.prizeId}`);
+    } catch (error) {
+      if (this.physicsDisposed || request !== this.prizePreviewRequest) return false;
+      throw error;
+    }
+    if (this.physicsDisposed || request !== this.prizePreviewRequest || !this.collectedPrizes.has(instanceId)) return false;
+    this.clearPrizePreview();
+    this.prizePreviewRoot.clear();
+    const content = source.clone(true);
+    const bounds = new THREE.Box3().setFromObject(content);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const dimension = Math.max(size.x, size.y, size.z, 0.001);
+    const model = new THREE.Group();
+    // Center the asset inside a separate pivot before scaling/rotating. Assets
+    // with an offset origin must not orbit around the camera while inspected.
+    content.position.sub(center);
+    model.add(content);
+    model.scale.setScalar(4.2 / dimension);
+    this.prizePreviewRadius = bounds.getBoundingSphere(new THREE.Sphere()).radius * (4.2 / dimension);
+    content.traverse(object => {
+      if (object instanceof THREE.Mesh) { object.castShadow = false; object.receiveShadow = false; }
+    });
+    this.prizePreviewRoot.add(model);
+    // The preview is composited after the cabinet's bloom, with its own soft
+    // studio lights. Bright diffuse materials should retain their texture,
+    // while the neon cabinet keeps its existing glow in the background.
+    const ambient = new THREE.HemisphereLight(0xffffff, 0x45516b, 0.8);
+    const key = new THREE.DirectionalLight(0xfff5e8, 1.8); key.position.set(4, 7, 8);
+    const fill = new THREE.DirectionalLight(0xc7dcff, 0.7); fill.position.set(-4, 1, 3);
+    key.target = this.prizePreviewRoot;
+    fill.target = this.prizePreviewRoot;
+    this.prizePreviewRoot.add(ambient, key, fill);
+    this.prizePreviewRoot.visible = true;
+    this.prizePreviewModel = model;
+    this.prizePreviewYaw = 0;
+    this.prizePreviewPitch = 0;
+    this.prizePreviewScale = 1;
+    this.prizePreviewMode = true;
+    this.clawKeys.clear();
+    return true;
+  }
+
+  isPrizePreviewing() { return this.prizePreviewMode; }
+
+  resetPrizePreview() {
+    this.prizePreviewYaw = 0;
+    this.prizePreviewPitch = 0;
+    this.prizePreviewScale = 1;
+  }
+
+  renderPrizePreview(renderer: THREE.WebGLRenderer) {
+    if (!this.prizePreviewMode) return;
+    const autoClear = renderer.autoClear;
+    try {
+      renderer.autoClear = false;
+      renderer.clearDepth();
+      renderer.render(this.prizePreviewScene, this.camera);
+    } finally {
+      renderer.autoClear = autoClear;
+    }
+  }
+
+  clearPrizePreview() {
+    this.prizePreviewRequest += 1;
+    if (!this.prizePreviewMode && !this.prizePreviewModel) return;
+    this.prizePreviewRoot.clear();
+    this.prizePreviewRoot.visible = false;
+    this.prizePreviewModel = null;
+    this.prizePreviewYaw = 0;
+    this.prizePreviewPitch = 0;
+    this.prizePreviewScale = 1;
+    this.prizePreviewMode = false;
+  }
+
+  private updateClaw(delta: number) {
+    const group = this.clawGroup;
+    this.clawStateTime += delta;
+    for (let index = this.clawPrizesOnTray.length - 1; index >= 0; index--) {
+      const prize = this.clawPrizesOnTray[index];
+      prize.elapsed += delta;
+      if (prize.elapsed > 3) {
+        this.collectDeliveredPrize(prize.model);
+        this.clawPrizesOnTray.splice(index, 1);
+      }
+    }
+    for (let index = this.clawDeliveries.length - 1; index >= 0; index--) {
+      const { model, motion, offset } = this.clawDeliveries[index];
+      motion.advance(delta);
+      model.position.copy(motion.position).multiply(group.scale).add(group.position).sub(offset);
+      if (motion.phase === 'settled') {
+        this.clawPrizesOnTray.push({ model, elapsed: 0 });
+        this.clawDeliveries.splice(index, 1);
+      }
+    }
+    const speed = 9;
+    if (this.clawState === 'ready') {
+      const x = (this.clawKeys.has('KeyD') || this.clawKeys.has('ArrowRight') ? 1 : 0) - (this.clawKeys.has('KeyA') || this.clawKeys.has('ArrowLeft') ? 1 : 0);
+      const z = (this.clawKeys.has('KeyS') || this.clawKeys.has('ArrowDown') ? 1 : 0) - (this.clawKeys.has('KeyW') || this.clawKeys.has('ArrowUp') ? 1 : 0);
+      this.clawVx += x * speed * delta; this.clawVz += z * speed * delta;
+    }
+    if (this.clawState === 'return') {
+      const dx = this.clawChute.x - this.clawX, dz = this.clawChute.y - this.clawZ;
+      this.clawVx += THREE.MathUtils.clamp(dx * 6, -3, 3) * delta * 3;
+      this.clawVz += THREE.MathUtils.clamp(dz * 6, -3, 3) * delta * 3;
+      if (Math.hypot(dx, dz) < 0.12 && this.clawStateTime > 0.5) { this.clawState = 'release'; this.clawStateTime = 0; this.clawOpenTarget = 1; }
+    }
+    this.clawVx *= Math.pow(0.0015, delta); this.clawVz *= Math.pow(0.0015, delta);
+    this.clawX = THREE.MathUtils.clamp(this.clawX + this.clawVx * delta, -2.15, 2.15);
+    this.clawZ = THREE.MathUtils.clamp(this.clawZ + this.clawVz * delta, -1.45, 1.45);
+    if (Math.abs(this.clawX) >= 2.14) this.clawVx = 0;
+    if (Math.abs(this.clawZ) >= 1.44) this.clawVz = 0;
+    if (this.clawState === 'down') { this.clawY = Math.max(0.55, this.clawY - 1.55 * delta); if (this.clawY <= 0.58) { this.clawState = 'grab'; this.clawStateTime = 0; } }
+    else if (this.clawState === 'grab') { this.clawOpenTarget = 0; if (this.clawStateTime > 0.8) { this.tryClawGrab(); this.clawState = 'up'; this.clawStateTime = 0; } }
+    else if (this.clawState === 'up') { this.clawY = Math.min(2.55, this.clawY + 1.9 * delta); if (this.clawY >= 2.5) { this.clawState = this.clawHeld ? 'return' : 'ready'; this.clawStateTime = 0; } }
+    else if (this.clawState === 'release') {
+      if (this.clawHeld) {
+        const delivered = this.clawHeld;
+        const proxy = this.bodies.get(delivered);
+        // Start at the actual displayed center, preserving the model's origin
+        // offset and orientation instead of jumping to a chute keyframe.
+        const bounds = new THREE.Box3().setFromObject(delivered);
+        const center = bounds.isEmpty() ? delivered.position.clone() : bounds.getCenter(new THREE.Vector3());
+        const size = bounds.getSize(new THREE.Vector3()).divide(group.scale);
+        const offset = center.clone().sub(delivered.position);
+        const point = center.clone().sub(group.position).divide(group.scale);
+        const velocity = new THREE.Vector3(this.clawHeadVelocity.x * 0.5, 0, this.clawHeadVelocity.z * 0.5);
+        if (proxy) this.physics.world.removeBody(proxy.body);
+        this.bodies.delete(delivered);
+        delivered.userData.cyberDelivered = true;
+        this.clawDeliveries.push({ model: delivered, offset,
+          motion: new PrizeDelivery(point, velocity, size.y / 2, Math.max(size.x, size.z) / 2, group.scale.y) });
+        this.clawHeld = null;
+      }
+      if (this.clawStateTime > 0.9) { this.clawState = 'ready'; this.clawStateTime = 0; }
+    }
+    if (this.clawState === 'ready' || this.clawState === 'release') this.clawOpenTarget = 1;
+    this.clawHeadVelocity.x += ((this.clawX - this.clawHeadPosition.x) * 26 - this.clawHeadVelocity.x * 5.2) * delta;
+    this.clawHeadVelocity.z += ((this.clawZ - this.clawHeadPosition.z) * 26 - this.clawHeadVelocity.z * 5.2) * delta;
+    this.clawHeadPosition.x += this.clawHeadVelocity.x * delta; this.clawHeadPosition.z += this.clawHeadVelocity.z * delta; this.clawHeadPosition.y = this.clawY;
+    if (this.clawHead) this.clawHead.position.copy(this.clawHeadPosition);
+    if (this.clawCarriage) this.clawCarriage.position.set(this.clawX, 4.55, this.clawZ);
+    if (this.clawCable) {
+      const top = new THREE.Vector3(this.clawX, 4.49, this.clawZ); const mid = top.clone().add(this.clawHeadPosition).multiplyScalar(.5); const len = top.distanceTo(this.clawHeadPosition);
+      this.clawCable.position.copy(mid); this.clawCable.scale.set(1, len, 1);
+      const direction = this.clawHeadPosition.clone().sub(top).normalize();
+      this.clawCable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+    }
+    if (this.clawHead) { this.clawHead.rotation.z = THREE.MathUtils.clamp(-this.clawHeadVelocity.x * .12, -.3, .3); this.clawHead.rotation.x = THREE.MathUtils.clamp(this.clawHeadVelocity.z * .12, -.3, .3); }
+    this.clawOpen += (this.clawOpenTarget - this.clawOpen) * Math.min(1, delta * 6);
+    this.clawProngs.forEach(p => { p.seg1.rotation.z = THREE.MathUtils.lerp(.15, .95, this.clawOpen); p.seg2.rotation.z = THREE.MathUtils.lerp(-1.25, -.5, this.clawOpen); });
+    if (this.clawHeld && this.clawState !== 'release') {
+      const proxy = this.bodies.get(this.clawHeld);
+      if (proxy) { const wx = group.position.x + this.clawHeadPosition.x * group.scale.x; const wy = group.position.y + (this.clawHeadPosition.y - .65) * group.scale.y; const wz = group.position.z + this.clawHeadPosition.z * group.scale.z; proxy.body.position.set(wx, wy, wz); proxy.body.velocity.setZero(); this.clawHeld.position.set(wx, wy, wz); }
+    }
+  }
+
+  private collectDeliveredPrize(model: THREE.Object3D) {
+    if (this.physicsDisposed || !model.userData.cyberDelivered || this.collectedPrizes.has(model.uuid)) return;
+    const definition = PRIZE_CATALOG.find(prize => prize.id === model.userData.prizeId);
+    if (!definition) return;
+    // The same physical instance leaves the scene before entering the backpack.
+    // Its UUID also distinguishes separate prizes that share the same model.
+    model.removeFromParent();
+    const prize: CollectedPrize = { id: model.uuid, prizeId: definition.id, collectedAt: Date.now() };
+    this.collectedPrizes.set(prize.id, prize);
+    this.onPrizeCollected?.(prize);
+  }
+
+  private tryClawGrab() {
+    let bestModel: THREE.Object3D | null = null;
+    let bestDistance = Infinity;
+    const worldX = this.clawGroup.position.x + this.clawHeadPosition.x * this.clawGroup.scale.x;
+    const worldZ = this.clawGroup.position.z + this.clawHeadPosition.z * this.clawGroup.scale.z;
+    this.bodies.forEach(({ body }, model) => { if (model.userData.cyberDragging || model.userData.cyberDock >= 0) return; const d = Math.hypot(body.position.x - worldX, body.position.z - worldZ); if (d < 1.0 && body.position.y < 5.0 && d < bestDistance) { bestDistance = d; bestModel = model; } });
+    if (bestModel) { this.clawHeld = bestModel; const proxy = this.bodies.get(bestModel)!; this.physics.hold(proxy.body); }
+  }
+
   orbit(dx: number, dy: number) {
+    if (this.prizePreviewMode) {
+      // Pointer deltas arrive from SceneManager while the cyber canvas owns
+      // the pointer. Rotate only the centered prize in preview mode; changing
+      // viewYaw/viewPitch here would make the whole machine drift underneath
+      // the still-open backpack panel.
+      this.prizePreviewYaw = (this.prizePreviewYaw + dx * 0.008) % (Math.PI * 2);
+      this.prizePreviewPitch = (this.prizePreviewPitch + dy * 0.006) % (Math.PI * 2);
+      return;
+    }
     this.viewYaw = THREE.MathUtils.clamp(this.viewYaw + dx * 0.004, -0.65, 0.65);
     this.viewPitch = THREE.MathUtils.clamp(this.viewPitch - dy * 0.003, -0.22, 0.28);
   }
 
   zoom(deltaY: number) {
+    if (this.prizePreviewMode) {
+      // update() caps the final scale against the camera's full bounding sphere fit.
+      this.prizePreviewScale = THREE.MathUtils.clamp(this.prizePreviewScale * Math.exp(-deltaY * 0.001), 0.65, 1.25);
+      return;
+    }
     this.viewDistance = THREE.MathUtils.clamp(this.viewDistance + deltaY * 0.018, 17, 36);
+  }
+
+  resize(width: number, height: number) {
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
   }
 
   private syncBody(model: THREE.Object3D) {
@@ -275,11 +681,40 @@ export class CyberGallery extends SunsetGallery {
   }
 
   dispose() {
+    this.disposed = true;
     this.physicsDisposed = true;
+    this.onPrizeCollected = undefined;
+    this.collectedPrizes.clear();
+    this.clawPrizesOnTray = [];
+    this.clawHeld = null;
+    this.clawDeliveries = [];
+    this.clearPrizePreview();
+    this.prizePreviewScene.environment = null;
+    this.prizePreviewScene.clear();
+    window.removeEventListener('keydown', this.clawKeyDown);
+    window.removeEventListener('keyup', this.clawKeyUp);
     if (this.dragTimer !== null) clearTimeout(this.dragTimer);
     this.dragModel = null;
     this.physics.dispose(); this.bodies.clear();
-    super.dispose();
+    const disposed = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
+    this.scene.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      if (object.geometry && !disposed.has(object.geometry)) { object.geometry.dispose(); disposed.add(object.geometry); }
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach(material => {
+        if (!material || disposed.has(material)) return;
+        disposed.add(material); material.dispose();
+        Object.values(material).forEach(value => {
+          if (value instanceof THREE.Texture && !disposed.has(value)) { value.dispose(); disposed.add(value); }
+        });
+      });
+    });
+    this.resources.forEach(resource => { if (!disposed.has(resource)) resource.dispose(); });
+    this.resources.clear();
+    this.assetCache.clear();
+    this.environment?.dispose();
+    this.environment = null;
+    this.scene.clear();
   }
 
   isDragging() { return this.dragModel !== null; }

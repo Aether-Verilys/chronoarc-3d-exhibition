@@ -262,5 +262,25 @@ export class SunsetGallery {
     this.targetGoal.set(0,3.5,-2.7);
     this.transition=0;
   }
-  dispose(){this.disposed=true;this.resources.forEach(r=>r.dispose());this.environment.dispose();}
+  dispose(){
+    if (this.disposed) return;
+    this.disposed = true;
+    const disposed = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>();
+    this.scene.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      if (object.geometry && !disposed.has(object.geometry)) { object.geometry.dispose(); disposed.add(object.geometry); }
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach(material => {
+        if (!material || disposed.has(material)) return;
+        disposed.add(material); material.dispose();
+        Object.values(material).forEach(value => {
+          if (value instanceof THREE.Texture && !disposed.has(value)) { value.dispose(); disposed.add(value); }
+        });
+      });
+    });
+    this.resources.forEach(resource => { if (!disposed.has(resource)) resource.dispose(); });
+    this.resources.clear();
+    this.environment.dispose();
+    this.scene.clear();
+  }
 }
