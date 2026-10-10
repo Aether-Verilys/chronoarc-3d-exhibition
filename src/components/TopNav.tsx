@@ -59,7 +59,7 @@ export const TopNav: React.FC<TopNavProps> = ({
       {/* Zone 1: Wordmark */}
       <div className="flex shrink-0 items-center gap-3">
         <span className="font-display text-xl font-bold tracking-tight text-slate-100 drop-shadow-[0_0_14px_rgba(34,211,238,0.28)]">
-          ChronoArc
+          Let's play models
         </span>
       </div>
 

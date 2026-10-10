@@ -1,4 +1,4 @@
-# ChronoArc 3D Studio
+# Let's play models
 
 Interactive Three.js 3D exhibition featuring a semicircle model array, dynamic bounce physics, and spatial lens stretch distortion.
 
