@@ -54,7 +54,7 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
 
   return (
     <div className={embedded ? "mt-5 pt-4 border-t border-slate-700/80 grid grid-cols-1 sm:grid-cols-2 gap-4 [&>input]:hidden [&>div.w-px]:hidden" : "fixed bottom-5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-2xl bg-[#0b1022]/95 backdrop-blur-xl border border-cyan-300/20 shadow-[0_12px_36px_rgba(0,0,0,0.4)] max-w-[96vw] overflow-x-auto [&>*]:shrink-0"}>
-      {!embedded && <input
+      <input
         ref={fileInputRef}
         type="file"
         accept=".glb,.gltf,model/gltf-binary,model/gltf+json"
@@ -64,17 +64,17 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
           e.target.value = '';
           if (file) onAddGlb(file, placement);
         }}
-      />}
+      />
 
-      {!embedded && <button
+      <button
         onClick={() => fileInputRef.current?.click()}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-cyan-100 bg-cyan-500/20 border border-cyan-300/40 hover:bg-cyan-400/30 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
       >
         <Plus className="w-3.5 h-3.5" />
         添加 GLB
-      </button>}
+      </button>
 
-      {!embedded && <select
+      <select
         value={placementKey}
         onChange={e => setPlacementKey(e.target.value)}
         className="h-8 max-w-[9.5rem] px-2 text-[11px] font-medium text-slate-200 bg-slate-900/80 border border-slate-600/70 rounded-xl cursor-pointer outline-none"
@@ -85,9 +85,9 @@ export const ArrayToolbar: React.FC<ArrayToolbarProps> = ({
             {t.nameCn}（{t.count}）
           </option>
         ))}
-      </select>}
+      </select>
 
-      {!embedded && <div className="w-px h-6 bg-slate-700" />}
+      <div className="w-px h-6 bg-slate-700" />
 
       {embedded && <div className="col-span-full text-xs font-bold tracking-wide text-slate-400 uppercase">矩阵排列</div>}
       <div className="flex items-center gap-2 min-w-[240px]">

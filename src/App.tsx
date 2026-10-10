@@ -303,7 +303,6 @@ export default function App() {
         onToggleMute={handleToggleMute}
         isOpticsOpen={isOpticsOpen}
         onToggleOptics={() => setIsOpticsOpen(v => !v)}
-        onAddGlb={() => glbInputRef.current?.click()}
         onCycleTheme={handleCycleTheme}
         isSunsetEnabled={isSunsetEnabled}
         onToggleSunset={async () => {
@@ -336,10 +335,6 @@ export default function App() {
           sceneManagerRef.current?.setSkyEnabled(enabled);
           setIsSkyEnabled(enabled);
         }}
-        tiers={tiers}
-        placementKey={placementKey}
-        onPlacementChange={setPlacementKey}
-        modelCount={models.length}
       />
 
       {isCyberEnabled && !selectedPrize && (
