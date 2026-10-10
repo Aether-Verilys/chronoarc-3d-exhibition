@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CyberGallery } from '../src/three/CyberGallery';
 import { SceneManager } from '../src/three/SceneManager';
+import { MACHINE_LAYOUT, MACHINE_OUTLET } from '../src/three/ClawMachineLayout';
+import { createClawModel } from '../src/three/ClawModel';
 import type { CollectedPrize } from '../src/types/prizes';
 
 // Exercise the actual state transitions without allocating a WebGL context.
@@ -11,8 +15,8 @@ function galleryHarness() {
   const received: CollectedPrize[] = [];
   const interactive = new THREE.Group();
   const clawGroup = new THREE.Group();
-  clawGroup.position.y = 3.1;
-  clawGroup.scale.setScalar(2);
+  clawGroup.position.y = MACHINE_LAYOUT.worldY;
+  clawGroup.scale.setScalar(MACHINE_LAYOUT.worldScale);
   const gallery = Object.assign(Object.create(CyberGallery.prototype), {
     physicsDisposed: false,
     interactive,
@@ -23,10 +27,12 @@ function galleryHarness() {
     clawHeld: null,
     clawDeliveries: [],
     clawPrizesOnTray: [],
-    clawChute: new THREE.Vector2(-1.55, 0.95),
+    clawChute: new THREE.Vector2(MACHINE_LAYOUT.chuteX, MACHINE_LAYOUT.chuteZ),
     clawKeys: new Set(),
-    clawX: 0, clawZ: 0, clawY: 2.55, clawVx: 0, clawVz: 0,
-    clawHeadPosition: new THREE.Vector3(0, 2.55, 0),
+    clawX: MACHINE_LAYOUT.chuteX, clawZ: MACHINE_LAYOUT.chuteZ,
+    clawY: MACHINE_LAYOUT.clawTopY, clawVx: 0, clawVz: 0,
+    clawHeadPosition: new THREE.Vector3(MACHINE_LAYOUT.chuteX,
+      MACHINE_LAYOUT.clawTopY, MACHINE_LAYOUT.chuteZ),
     clawHeadVelocity: new THREE.Vector3(),
     clawOpen: 1, clawOpenTarget: 1, clawProngs: [],
     bodies: new Map(),
@@ -39,11 +45,17 @@ function galleryHarness() {
   });
   const addPrize = (prizeId = 'burger') => {
     const model = new THREE.Group();
-    model.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)));
-    model.position.set(-3.1, 6.9, 1.9);
+    const size = MACHINE_LAYOUT.prizeSize;
+    model.add(new THREE.Mesh(new THREE.BoxGeometry(size, size, size)));
+    model.position.set(MACHINE_LAYOUT.chuteX,
+      MACHINE_LAYOUT.clawTopY - MACHINE_LAYOUT.holdOffset, MACHINE_LAYOUT.chuteZ)
+      .multiplyScalar(MACHINE_LAYOUT.worldScale).add(clawGroup.position);
     model.userData.prizeId = prizeId;
     interactive.add(model);
-    gallery.bodies.set(model, { body: {} });
+    gallery.bodies.set(model, {
+      body: { position: new THREE.Vector3(), velocity: { setZero() {} } },
+      offset: new THREE.Vector3(),
+    });
     return model;
   };
   const release = (model: THREE.Object3D) => {
@@ -99,6 +111,57 @@ test('overlapping deliveries of the same model retain distinct physical identiti
   assert.deepEqual(new Set(received.map(item => item.id)), new Set([first.uuid, second.uuid]));
   assert.equal(first.parent, null);
   assert.equal(second.parent, null);
+});
+
+test('the imported five-finger claw returns, releases and visibly delivers through the left door', async () => {
+  const file = await readFile(new URL('../public/models/claw-machine/claw.glb', import.meta.url));
+  const jsonLength = file.readUInt32LE(12);
+  const json = JSON.parse(file.subarray(20, 20 + jsonLength).toString());
+  for (const mesh of json.meshes) for (const primitive of mesh.primitives) delete primitive.material;
+  for (const key of ['materials', 'textures', 'images', 'samplers']) delete json[key];
+  const jsonBytes = Buffer.from(JSON.stringify(json));
+  const paddedLength = Math.ceil(jsonBytes.length / 4) * 4;
+  const binaryChunks = file.subarray(20 + jsonLength);
+  const clean = Buffer.alloc(20 + paddedLength + binaryChunks.length, 0x20);
+  file.copy(clean, 0, 0, 12);
+  clean.writeUInt32LE(clean.length, 8);
+  clean.writeUInt32LE(paddedLength, 12);
+  clean.writeUInt32LE(0x4e4f534a, 16);
+  jsonBytes.copy(clean, 20);
+  binaryChunks.copy(clean, 20 + paddedLength);
+  const source = (await new GLTFLoader().parseAsync(
+    clean.buffer.slice(clean.byteOffset, clean.byteOffset + clean.byteLength), '')).scene;
+
+  const { gallery, received, addPrize, interactive, until } = galleryHarness();
+  gallery.clawModel = createClawModel(source, MACHINE_LAYOUT.clawHeight);
+  gallery.clawHead = new THREE.Group();
+  gallery.clawHead.add(gallery.clawModel.root);
+  gallery.clawGroup.add(gallery.clawHead);
+  gallery.clawX = 0.9;
+  gallery.clawZ = -0.7;
+  gallery.clawHeadPosition.set(gallery.clawX, MACHINE_LAYOUT.clawTopY, gallery.clawZ);
+  const prize = addPrize();
+  gallery.clawHeld = prize;
+  gallery.clawState = 'return';
+  gallery.clawOpen = 0;
+  gallery.clawOpenTarget = 0;
+
+  until(() => gallery.clawDeliveries.length === 1);
+  assert.equal(received.length, 0);
+  assert.equal(prize.parent, interactive);
+  const delivery = gallery.clawDeliveries[0].motion;
+  assert.ok(Math.abs(delivery.position.x - MACHINE_LAYOUT.chuteX) < 0.06,
+    'the real claw envelope must allow release over the left chute');
+  assert.ok(Math.abs(delivery.position.z - MACHINE_LAYOUT.chuteZ) < 0.06);
+  until(() => delivery.position.z > MACHINE_OUTLET.frontZ);
+  assert.equal(prize.parent, interactive, 'the falling model remains visible while crossing the door');
+  assert.equal(received.length, 0);
+  until(() => gallery.clawPrizesOnTray.length === 1);
+  assert.ok(delivery.position.z - MACHINE_LAYOUT.prizeSize / MACHINE_LAYOUT.worldScale / 2
+    > MACHINE_OUTLET.frontZ, 'the entire prize has emerged before its tray stay begins');
+  assert.equal(received.length, 0);
+  until(() => received.length === 1);
+  assert.equal(prize.parent, null);
 });
 
 test('release preserves an offset model origin and starts with natural acceleration', () => {

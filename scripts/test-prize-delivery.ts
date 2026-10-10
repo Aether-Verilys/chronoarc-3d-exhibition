@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
-import { PrizeDelivery, PRIZE_CHUTE } from '../src/three/PrizeDelivery';
+import { PrizeDelivery } from '../src/three/PrizeDelivery';
+import { MACHINE_LAYOUT, MACHINE_OUTLET, PRIZE_CHUTE } from '../src/three/ClawMachineLayout';
 
-const INITIAL_POSITION = new THREE.Vector3(-1.55, 1.9, 0.95);
-const HALF_HEIGHT = 0.26;
-const RADIUS = 0.3375;
-const WORLD_SCALE = 2;
+const INITIAL_POSITION = new THREE.Vector3(MACHINE_LAYOUT.chuteX,
+  MACHINE_LAYOUT.clawTopY - MACHINE_LAYOUT.holdOffset, MACHINE_LAYOUT.chuteZ);
+const WORLD_SCALE = MACHINE_LAYOUT.worldScale;
+const HALF_HEIGHT = MACHINE_LAYOUT.prizeSize / WORLD_SCALE / 2;
+const RADIUS = HALF_HEIGHT;
 
 function delivery(velocity = new THREE.Vector3()) {
   return new PrizeDelivery(INITIAL_POSITION, velocity, HALF_HEIGHT, RADIUS, WORLD_SCALE);
@@ -37,6 +39,7 @@ test('release preserves its position and free fall uses 9.8 world units per seco
 
 test('a released model retains the claw momentum while gravity accelerates its fall', () => {
   const initialVelocity = new THREE.Vector3(0.12, -0.08, 0.2);
+  const originalPosition = INITIAL_POSITION.clone();
   const motion = delivery(initialVelocity);
   const elapsed = 0.5;
   motion.advance(elapsed);
@@ -48,7 +51,7 @@ test('a released model retains the claw momentum while gravity accelerates its f
   close(motion.velocity.x, initialVelocity.x, 'retained lateral velocity');
   close(motion.velocity.z, initialVelocity.z, 'retained forward velocity');
   closeVector(initialVelocity, new THREE.Vector3(0.12, -0.08, 0.2), 'input velocity is not mutated');
-  closeVector(INITIAL_POSITION, new THREE.Vector3(-1.55, 1.9, 0.95), 'input position is not mutated');
+  closeVector(INITIAL_POSITION, originalPosition, 'input position is not mutated');
 });
 
 function sampleJourney(frameDurations: number[]) {
@@ -97,7 +100,10 @@ test('the prize falls, slides through the outlet and settles on the tray without
 
   assert.deepEqual(transitions.map(item => item.phase), ['ramp', 'outlet', 'settled']);
   const [ramp, outlet, settled] = transitions;
-  assert.ok(ramp.time > 0.8 && ramp.time < 1.2, 'the visible fall must take a plausible amount of time');
+  const fallDuration = Math.sqrt(2 * (INITIAL_POSITION.y - HALF_HEIGHT - PRIZE_CHUTE.entryFloorY)
+    / (9.8 / WORLD_SCALE));
+  assert.ok(Math.abs(ramp.time - fallDuration) <= step,
+    'the fall duration must follow the new cabinet height and gravity');
   assert.ok(outlet.position.z >= PRIZE_CHUTE.outletZ, 'the model must pass the lower cabinet outlet');
   assert.ok(outlet.time > ramp.time, 'the chute slide must have a nonzero duration');
   assert.ok(settled.time > 2 && settled.time < 5, 'a full delivery should take a few seconds');
@@ -111,4 +117,34 @@ test('the prize falls, slides through the outlet and settles on the tray without
   motion.advance(2);
   assert.equal(motion.phase, 'settled');
   closeVector(motion.position, rest, 'settled position remains stable');
+});
+
+test('prizes of different shapes emerge through the measured left door before settling', () => {
+  for (const [halfHeight, radius] of [[0.08, 0.34], [0.20, 0.28], [0.30, 0.36]]) {
+    for (const sideways of [-1, 1]) {
+      const start = INITIAL_POSITION.clone().add(new THREE.Vector3(sideways * 0.035, 0, 0));
+      const motion = new PrizeDelivery(start, new THREE.Vector3(sideways * 0.02, 0, 0.025),
+        halfHeight, radius, WORLD_SCALE);
+      let crossing: THREE.Vector3 | undefined;
+      for (let frame = 0; frame < 120 * 6 && motion.phase !== 'settled'; frame++) {
+        const previous = motion.position.clone();
+        motion.advance(1 / 120);
+        assert.ok(motion.position.distanceTo(previous) < 0.06, 'the whole exit remains continuous');
+        if (!crossing && previous.z < MACHINE_OUTLET.frontZ && motion.position.z >= MACHINE_OUTLET.frontZ) {
+          crossing = motion.position.clone();
+        }
+      }
+      assert.ok(crossing, 'the prize must visibly cross the front skin of machine.glb');
+      assert.ok(crossing.x < 0, 'the prize exits on the machine left');
+      assert.ok(Math.abs(crossing.x - MACHINE_OUTLET.x) + radius < PRIZE_CHUTE.halfWidth + 0.01,
+        'the prize fits between the exit sides');
+      assert.ok(crossing.y - halfHeight > MACHINE_OUTLET.bottomY,
+        'the prize crosses above the lower door sill');
+      assert.ok(crossing.y + halfHeight < MACHINE_OUTLET.topY,
+        'the prize crosses below the top of the door');
+      assert.equal(motion.phase, 'settled');
+      assert.ok(motion.position.z - radius > MACHINE_OUTLET.frontZ,
+        'a prize cannot settle for collection while still inside the cabinet');
+    }
+  }
 });

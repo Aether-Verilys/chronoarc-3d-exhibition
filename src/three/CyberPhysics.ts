@@ -1,11 +1,12 @@
 import * as CANNON from 'cannon-es';
+import { MACHINE_LAYOUT } from './ClawMachineLayout';
 
 export const WORLD_GRAVITY = 9.8;
 
 /** Sphere proxies keep detailed GLBs inexpensive to simulate. */
 export class CyberPhysics {
   // The visible playfield is the top of the raised lower cabinet section.
-  private readonly floorY = 3.50;
+  private readonly floorY = MACHINE_LAYOUT.worldY + MACHINE_LAYOUT.floorY * MACHINE_LAYOUT.worldScale;
   readonly world = new CANNON.World({ gravity: new CANNON.Vec3(0, -WORLD_GRAVITY, 0), allowSleep: true });
   private material = new CANNON.Material('cyber-surfaces');
 
@@ -13,13 +14,18 @@ export class CyberPhysics {
     this.world.addContactMaterial(new CANNON.ContactMaterial(this.material, this.material, {
       friction: 0.48, restitution: 0.36,
     }));
-    // Claw-machine playfield: floor at y=0 and a compact glass-box boundary.
-    this.box([10.1, 0.12, 7.45], [0, this.floorY, 0]);
-    // Collision planes sit directly behind the scaled glass panels.
-    this.box([0.16, 12.0, 7.45], [-5.05, this.floorY + 6, 0]);
-    this.box([0.16, 12.0, 7.45], [5.05, this.floorY + 6, 0]);
-    this.box([10.1, 12.0, 0.16], [0, this.floorY + 6, -3.75]);
-    this.box([10.1, 12.0, 0.16], [0, this.floorY + 6, 3.75]);
+    const scale = MACHINE_LAYOUT.worldScale;
+    const width = MACHINE_LAYOUT.halfWidth * 2 * scale;
+    const depth = (MACHINE_LAYOUT.frontZ - MACHINE_LAYOUT.backZ) * scale;
+    const centerZ = (MACHINE_LAYOUT.frontZ + MACHINE_LAYOUT.backZ) * scale / 2;
+    const height = (MACHINE_LAYOUT.ceilingY - MACHINE_LAYOUT.floorY) * scale;
+    // Hidden collision proxies follow the imported cabinet's interior. The
+    // delivery controller takes over caught prizes at the chute opening.
+    this.box([width, 0.12, depth], [0, this.floorY - 0.06, centerZ]);
+    this.box([0.12, height, depth], [-width / 2 - 0.06, this.floorY + height / 2, centerZ]);
+    this.box([0.12, height, depth], [width / 2 + 0.06, this.floorY + height / 2, centerZ]);
+    this.box([width, height, 0.12], [0, this.floorY + height / 2, MACHINE_LAYOUT.backZ * scale - 0.06]);
+    this.box([width, height, 0.12], [0, this.floorY + height / 2, MACHINE_LAYOUT.frontZ * scale + 0.06]);
   }
 
   private box(size: number[], position: number[]) {

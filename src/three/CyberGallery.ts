@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import type { Body } from 'cannon-es';
 import { CyberPhysics } from './CyberPhysics';
 import { PrizeDelivery, PRIZE_CHUTE } from './PrizeDelivery';
+import { MACHINE_LAYOUT } from './ClawMachineLayout';
+import { createClawModel, type ClawModel } from './ClawModel';
+import { prepareCabinetModel } from './CabinetModel';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CollectedPrize, PRIZE_CATALOG } from '../types/prizes';
@@ -32,27 +35,29 @@ export class CyberGallery {
   private dragTimer: number | null = null;
   private clawGroup = new THREE.Group();
   private viewYaw = 0;
-  private viewPitch = 0;
-  private viewDistance = 25;
+  private viewPitch = 0.10;
+  private viewDistance = 23;
   private clawX = 0;
   private clawZ = 0;
   private clawState: 'ready' | 'down' | 'grab' | 'up' | 'return' | 'release' = 'ready';
   private clawStateTime = 0;
-  private clawY = 2.55;
+  private clawY = MACHINE_LAYOUT.clawTopY;
   private clawHeld: THREE.Object3D | null = null;
   private clawHead: THREE.Group | null = null;
+  private clawRail: THREE.Mesh | null = null;
   private clawCarriage: THREE.Mesh | null = null;
   private clawCable: THREE.Mesh | null = null;
-  private clawProngs: Array<{ seg1: THREE.Group; seg2: THREE.Group }> = [];
+  private clawModel: ClawModel | null = null;
+  private machineReady = false;
   // Local to clawGroup; the carriage, cable top and head all use the same
   // Z datum so the hanging rod stays centered over the claw.
-  private clawHeadPosition = new THREE.Vector3(0, 2.55, 0);
+  private clawHeadPosition = new THREE.Vector3(0, MACHINE_LAYOUT.clawTopY, 0);
   private clawHeadVelocity = new THREE.Vector3();
   private clawVx = 0;
   private clawVz = 0;
   private clawOpen = 1;
   private clawOpenTarget = 1;
-  private readonly clawChute = new THREE.Vector2(-1.55, 0.95);
+  private readonly clawChute = new THREE.Vector2(MACHINE_LAYOUT.chuteX, MACHINE_LAYOUT.chuteZ);
   private clawDeliveries: Array<{ model: THREE.Object3D; motion: PrizeDelivery; offset: THREE.Vector3 }> = [];
   private clawPrizesOnTray: Array<{ model: THREE.Object3D; elapsed: number }> = [];
   private collectedPrizes = new Map<string, CollectedPrize>();
@@ -69,7 +74,7 @@ export class CyberGallery {
   private prizePreviewScale = 1;
   private prizePreviewRadius = 1;
   private clawKeys = new Set<string>();
-  private clawKeyDown = (e: KeyboardEvent) => { if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) { e.preventDefault(); if (this.prizePreviewMode) return; this.clawKeys.add(e.code); if (e.code === 'Space' && this.clawState === 'ready') { this.clawState = 'down'; this.clawStateTime = 0; } } };
+  private clawKeyDown = (e: KeyboardEvent) => { if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) { e.preventDefault(); if (this.prizePreviewMode || !this.machineReady) return; this.clawKeys.add(e.code); if (e.code === 'Space' && this.clawState === 'ready') { this.clawState = 'down'; this.clawStateTime = 0; } } };
   private clawKeyUp = (e: KeyboardEvent) => { this.clawKeys.delete(e.code); };
   constructor(renderer: THREE.WebGLRenderer) {
     this.scene.add(this.interactive);
@@ -80,10 +85,9 @@ export class CyberGallery {
     this.camera.position.set(0, 8.2, 25);
     this.camera.lookAt(0, 5.4, 0);
     // Replace the warm gallery mood with a dark gunmetal workshop shell.
-    // Match the reference room: deep purple backdrop, soft distance fog and
-    // a compact studio environment for convincing glass/metal reflections.
+    // A compact studio environment supplies glass/metal reflections without
+    // distance fog obscuring the prizes and the lower collection outlet.
     this.scene.background = new THREE.Color(0x241532);
-    this.scene.fog = new THREE.Fog(0x241532, 14, 30);
     const pmrem = new THREE.PMREMGenerator(renderer);
     this.environment = pmrem.fromScene(new RoomEnvironment(), 0.04);
     pmrem.dispose();
@@ -206,15 +210,18 @@ export class CyberGallery {
 
     // Load only prize models owned by this room. The balcony room is entirely
     // independent and is never constructed or retained here.
-    this.ready = this.loadPrizeModels();
+    this.setupClawMachine();
+    this.ready = Promise.all([this.loadPrizeModels(), this.loadMachineModels()]).then(() => {});
     void this.ready.then(() => {
       if (this.physicsDisposed) return;
-      // Models begin on the foreground bench, ready to be picked up.
+      // Prizes settle inside the imported cabinet before play begins.
       this.interactive.children.forEach((model, index) => {
         const col = index % 6;
         const row = Math.floor(index / 6);
         // World-space birth points stay safely inside the doubled glass box.
-        model.position.set(-4.2 + (col % 6) * 1.55, 11.0 + row * 0.42, -2.8 + (col % 4) * 1.75);
+        const scale = MACHINE_LAYOUT.worldScale;
+        const floorY = MACHINE_LAYOUT.worldY + MACHINE_LAYOUT.floorY * scale;
+        model.position.set(-2.45 + col * .98, floorY + 2.0 + row * 1.12, -1.7 + row * 1.45);
         // Cyber-space display convention: every artifact faces screen-right.
         model.rotation.set(0, -Math.PI / 2, 0);
         model.userData.baseY = model.position.y;
@@ -242,8 +249,8 @@ export class CyberGallery {
       const key = new THREE.DirectionalLight(0xb9eaff, 1.7);
       key.position.set(-5, 10, 8);
       this.scene.add(key);
+      this.machineReady = true;
     }).catch(() => { /* SceneManager reports asset loading failures. */ });
-    this.setupClawMachine();
     window.addEventListener('keydown', this.clawKeyDown, { passive: false });
     window.addEventListener('keyup', this.clawKeyUp);
   }
@@ -258,7 +265,7 @@ export class CyberGallery {
       const source = sources[index % sources.length].clone(true);
       const bounds = new THREE.Box3().setFromObject(source);
       const size = bounds.getSize(new THREE.Vector3());
-      const scale = Math.min(1.35 / Math.max(size.y, 0.001), 1.35 / Math.max(size.x, size.z, 0.001));
+      const scale = MACHINE_LAYOUT.prizeSize / Math.max(size.x, size.y, size.z, 0.001);
       source.scale.multiplyScalar(scale);
       source.traverse(object => { if (object instanceof THREE.Mesh) { object.castShadow = true; object.receiveShadow = true; } });
       const wrapper = new THREE.Group();
@@ -268,6 +275,24 @@ export class CyberGallery {
       wrapper.userData.bounce = 0;
       this.interactive.add(wrapper);
     }
+  }
+
+  private async loadMachineModels() {
+    const [machineSource, clawSource] = await Promise.all([
+      this.loadAsset('claw-machine/machine'), this.loadAsset('claw-machine/claw'),
+    ]);
+    if (this.disposed) return;
+    const cabinet = prepareCabinetModel(machineSource);
+    cabinet.traverse(object => {
+      if (object instanceof THREE.Mesh) this.resources.add(object.geometry);
+    });
+    this.clawGroup.add(cabinet);
+    this.clawModel = createClawModel(clawSource, MACHINE_LAYOUT.clawHeight);
+    this.clawModel.root.traverse(object => {
+      if (object instanceof THREE.Mesh) object.castShadow = object.receiveShadow = true;
+    });
+    this.clawHead!.add(this.clawModel.root);
+    this.clawModel.setOpen(this.clawOpen);
   }
 
   private loadAsset(name: string): Promise<THREE.Group> {
@@ -299,92 +324,64 @@ export class CyberGallery {
   }
 
   private setupClawMachine() {
-    // Raised pedestal leaves a tall, readable control bay below the playfield.
-    const group = this.clawGroup; group.userData.clawShell = true; group.position.y = 3.1; group.scale.setScalar(2); this.scene.add(group);
-    const box = (w:number,h:number,d:number,color:number,x:number,y:number,z:number,transparent=false) => {
-      const mat = new THREE.MeshStandardMaterial({color,roughness:.32,metalness:.4,transparent,opacity:transparent?.14:1});
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(x,y,z); m.userData.clawShell=true; m.castShadow=true; m.receiveShadow=true; group.add(m); return m;
+    const group = this.clawGroup;
+    group.name = 'ClawMachine';
+    group.position.y = MACHINE_LAYOUT.worldY;
+    group.scale.setScalar(MACHINE_LAYOUT.worldScale);
+    this.scene.add(group);
+    const box = (size: [number, number, number], position: [number, number, number], color: number) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size),
+        new THREE.MeshStandardMaterial({ color, roughness: .42, metalness: .5 }));
+      mesh.position.set(...position);
+      mesh.castShadow = mesh.receiveShadow = true;
+      group.add(mesh);
+      return mesh;
     };
-    const pink=0xff5fa8,dark=0x3a2140;
-    box(5.8,.38,4.1,0x6b3fa0,0,-.2,0); box(5.8,5.2,.22,dark,0,2.45,-2); box(5.8,.52,4.1,pink,0,5.05,0); box(5.8,1,4.1,pink,0,-.72,0);
-    for(const [x,z] of [[-2.72,-1.86],[2.72,-1.86],[-2.72,1.86],[2.72,1.86]]) box(.32,4.8,.32,pink,x,2.42,z);
-    // Glass starts directly on the single lower cabinet body.
-    box(5.05,4.45,.05,0xdff0ff,0,2.45,1.86,true); box(3.45,4.45,.05,0xdff0ff,-2.52,2.45,0,true).rotation.y=Math.PI/2; box(3.45,4.45,.05,0xdff0ff,2.52,2.45,0,true).rotation.y=Math.PI/2;
-    box(4.8,.82,.3,dark,0,5.78,.55);
-    const sign=new THREE.Mesh(new THREE.PlaneGeometry(4.6,.76),new THREE.MeshBasicMaterial({color:0xff4fc3,toneMapped:false})); sign.position.set(0,5.78,.72); sign.userData.clawShell=true; group.add(sign);
-    for(let i=0;i<9;i++){const b=new THREE.Mesh(new THREE.SphereGeometry(.08,10,8),new THREE.MeshBasicMaterial({color:i%2?0xff4fc3:0xffd54a}));b.position.set(-2+i*.5,5.78,.8);b.userData.clawShell=true;group.add(b);}
 
-    // Reference internal prize chute: a dark opening in the playfield with a lit rim.
-    const chuteX = -1.55, chuteZ = .95;
-    const chuteHole = new THREE.Mesh(new THREE.CircleGeometry(.55, 40), new THREE.MeshBasicMaterial({ color: 0x08040d, toneMapped: false }));
-    chuteHole.rotation.x = -Math.PI / 2; chuteHole.position.set(chuteX, .015, chuteZ); chuteHole.userData.clawShell = true; group.add(chuteHole);
-    const chuteRing = new THREE.Mesh(new THREE.TorusGeometry(.59, .045, 12, 40), new THREE.MeshStandardMaterial({ color: 0xffd54a, metalness: .75, roughness: .25, emissive: 0x664400, emissiveIntensity: .55 }));
-    chuteRing.rotation.x = -Math.PI / 2; chuteRing.position.set(chuteX, .035, chuteZ); chuteRing.userData.clawShell = true; group.add(chuteRing);
-    const chuteGlow = new THREE.PointLight(0xffb52e, 2.8, 2.6, 2); chuteGlow.position.set(chuteX, .25, chuteZ); group.add(chuteGlow);
-
-    // Reference claw: rail, motor carriage, spring cable and three articulated fingers.
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: .8, roughness: .25 });
-    // Keep all gantry parts in one local coordinate frame.  The cable's top,
-    // carriage and claw head must share the same Z origin or the rod appears
-    // to hang beside the claw as soon as it starts moving.
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(3.9, .12, .12), railMat); rail.position.set(0, 4.55, 0); rail.userData.clawShell = true; group.add(rail);
-    const carriage = new THREE.Mesh(new THREE.BoxGeometry(.5, .28, .5), new THREE.MeshStandardMaterial({ color: 0xffd54a, metalness: .5, roughness: .3 }));
-    carriage.position.set(0, 4.55, 0); carriage.userData.clawShell = true; carriage.castShadow = true; group.add(carriage); this.clawCarriage = carriage;
-    const cable = new THREE.Mesh(new THREE.CylinderGeometry(.02, .02, 1, 8), new THREE.MeshStandardMaterial({ color: 0x888888, metalness: .8, roughness: .3 }));
-    cable.userData.clawShell = true; group.add(cable); this.clawCable = cable;
-    const claw = new THREE.Group(); this.clawHead = claw; claw.userData.clawShell = true; claw.position.set(0, 2.55, 0); group.add(claw);
-    const hub = new THREE.Mesh(new THREE.SphereGeometry(.16, 16, 12), new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: .85, roughness: .2 })); hub.castShadow = true; claw.add(hub);
-    const armMat = new THREE.MeshStandardMaterial({ color: 0xc8c8d2, metalness: .9, roughness: .22 });
-    const jointMat = new THREE.MeshStandardMaterial({ color: 0x6f6f80, metalness: .9, roughness: .3 });
-    for (let i = 0; i < 3; i++) {
-      const pivot = new THREE.Group(); pivot.rotation.y = (i / 3) * Math.PI * 2; pivot.position.y = -.04;
-      const shoulder = new THREE.Group(); shoulder.position.x = .12;
-      const joint1 = new THREE.Mesh(new THREE.SphereGeometry(.055, 12, 10), jointMat); shoulder.add(joint1);
-      const upper = new THREE.Mesh(new THREE.CylinderGeometry(.03, .04, .42, 10), armMat); upper.position.y = -.21; shoulder.add(upper);
-      const elbow = new THREE.Group(); elbow.position.y = -.42;
-      const joint2 = new THREE.Mesh(new THREE.SphereGeometry(.048, 12, 10), jointMat); elbow.add(joint2);
-      const fore = new THREE.Mesh(new THREE.CylinderGeometry(.04, .02, .42, 10), armMat); fore.position.y = -.21; elbow.add(fore);
-      const tip = new THREE.Mesh(new THREE.ConeGeometry(.026, .16, 8), jointMat); tip.position.y = -.48; tip.rotation.x = Math.PI; elbow.add(tip);
-      shoulder.add(elbow); pivot.add(shoulder); claw.add(pivot); this.clawProngs.push({ seg1: shoulder, seg2: elbow });
+    // Only the moving gantry and delivery surfaces are procedural. The cabinet,
+    // controls, signage and five-finger claw come from the supplied GLBs.
+    const rail = box([MACHINE_LAYOUT.halfWidth * 2, .08, .10], [0, MACHINE_LAYOUT.railY, 0], 0x78818b);
+    rail.name = 'ClawRail';
+    this.clawRail = rail;
+    for (const side of [-1, 1]) {
+      box([.08, .08, MACHINE_LAYOUT.frontZ - MACHINE_LAYOUT.backZ],
+        [side * (MACHINE_LAYOUT.halfWidth - .04), MACHINE_LAYOUT.railY,
+          (MACHINE_LAYOUT.frontZ + MACHINE_LAYOUT.backZ) / 2], 0x78818b);
     }
-    box(3.5,.18,1.05,pink,0,.55,2.3);
-    const control = new THREE.Group(); control.userData.clawShell = true; control.position.set(0,.68,2.34); group.add(control);
-    const joystickBase = new THREE.Mesh(new THREE.CylinderGeometry(.22,.26,.08,20),new THREE.MeshStandardMaterial({color:0x2a2a35,metalness:.7,roughness:.3})); joystickBase.position.x=-.95; joystickBase.userData.clawShell=true; control.add(joystickBase);
-    const joystickBall = new THREE.Mesh(new THREE.SphereGeometry(.11,16,12),new THREE.MeshStandardMaterial({color:0xff3355,metalness:.3,roughness:.25,emissive:0x551122,emissiveIntensity:.5})); joystickBall.position.set(-.95,.33,0); joystickBall.userData.clawShell=true; control.add(joystickBall);
-    const buttonBase = new THREE.Mesh(new THREE.CylinderGeometry(.17,.2,.08,20),new THREE.MeshStandardMaterial({color:0x333344,metalness:.6,roughness:.3})); buttonBase.position.x=.95; buttonBase.userData.clawShell=true; control.add(buttonBase);
-    const button = new THREE.Mesh(new THREE.SphereGeometry(.13,16,12),new THREE.MeshStandardMaterial({color:0xffd54a,emissive:0x996600,emissiveIntensity:1.2})); button.position.set(.95,.16,0); button.userData.clawShell=true; control.add(button);
-    // Front lower body, with a recessed prize outlet and a visible path from the inner chute.
-    box(4.9,1.55,0.72,0x3a2140,0,-.68,2.18);
-    const outletX = -1.5;
-    const outlet = new THREE.Mesh(new THREE.BoxGeometry(1.65,.62,.12),new THREE.MeshBasicMaterial({color:0x07030d,toneMapped:false}));
-    outlet.position.set(outletX,-.65,2.58); outlet.userData.clawShell=true; group.add(outlet);
-    const outletTop = box(1.82,.10,.18,0xffd54a,outletX,-.30,2.58); const outletBottom = box(1.82,.10,.18,0xff5fa8,outletX,-1.00,2.58);
-    const outletLeft = box(.10,.80,.18,0xff5fa8,outletX-.86,-.65,2.58); const outletRight = box(.10,.80,.18,0xff5fa8,outletX+.86,-.65,2.58);
-    outletTop.userData.clawShell = outletBottom.userData.clawShell = outletLeft.userData.clawShell = outletRight.userData.clawShell = true;
-    // Short dark tunnel under the playfield visually joins the internal hole to the front opening.
-    // The chute has a shallow ramp, so gravity carries prizes to the front lip.
+    this.clawCarriage = box([.30, .15, .30], [0, MACHINE_LAYOUT.railY, 0], 0x3b414c);
+    this.clawCarriage.name = 'ClawCarriage';
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(.015, .015, 1, 8),
+      new THREE.MeshStandardMaterial({ color: 0x8d939e, metalness: .85, roughness: .3 }));
+    cable.name = 'ClawCable';
+    group.add(cable);
+    this.clawCable = cable;
+    this.clawHead = new THREE.Group();
+    this.clawHead.name = 'ClawHead';
+    this.clawHead.position.copy(this.clawHeadPosition);
+    group.add(this.clawHead);
+
+    const chuteLight = new THREE.PointLight(0xffb52e, 2.8, 2.6, 2);
+    chuteLight.position.set(this.clawChute.x, MACHINE_LAYOUT.floorY + .12, this.clawChute.y);
+    group.add(chuteLight);
     const rampDepth = PRIZE_CHUTE.outletZ - PRIZE_CHUTE.entryZ;
     const rampDrop = PRIZE_CHUTE.outletFloorY - PRIZE_CHUTE.entryFloorY;
-    const tunnelFloor = box(1.25,.10,Math.hypot(rampDepth,rampDrop),0x12091a,outletX,
-      (PRIZE_CHUTE.entryFloorY + PRIZE_CHUTE.outletFloorY) / 2 - .05,
-      (PRIZE_CHUTE.entryZ + PRIZE_CHUTE.outletZ) / 2);
-    // Positive X rotation lowers the surface as Z moves toward the outlet.
-    tunnelFloor.rotation.x = Math.atan2(-rampDrop, rampDepth);
-    const tunnelLeft = box(.10,.65,1.65,0x24142e,outletX-.64,-.67,1.78);
-    const tunnelRight = box(.10,.65,1.65,0x24142e,outletX+.64,-.67,1.78);
-    tunnelFloor.userData.clawShell = tunnelLeft.userData.clawShell = tunnelRight.userData.clawShell = true;
-    const outletLight = new THREE.Mesh(new THREE.BoxGeometry(1.35,.055,.04),new THREE.MeshBasicMaterial({color:0xffd54a,toneMapped:false}));
-    outletLight.position.set(outletX,-.33,2.68); outletLight.userData.clawShell=true; group.add(outletLight);
-    const tray = box(2.0,.12,1.0,0x171020,outletX,-1.20,3.30);
-    tray.userData.clawShell = true;
-    for (const [x,z,w,d] of [[outletX-1,3.3,.10,1.0],[outletX+1,3.3,.10,1.0],[outletX,2.8,2.0,.10],[outletX,3.8,2.0,.10]] as const) {
-      const rim = box(w,.22,d,0xff5fa8,x,-1.08,z); rim.userData.clawShell = true;
+    const ramp = box([1.08, .06, Math.hypot(rampDepth, rampDrop)],
+      [PRIZE_CHUTE.x, (PRIZE_CHUTE.entryFloorY + PRIZE_CHUTE.outletFloorY) / 2 - .03,
+        (PRIZE_CHUTE.entryZ + PRIZE_CHUTE.outletZ) / 2], 0x11151c);
+    ramp.name = 'PrizeChuteRamp';
+    ramp.rotation.x = Math.atan2(-rampDrop, rampDepth);
+    const trayCenterZ = (PRIZE_CHUTE.trayBackZ + PRIZE_CHUTE.trayFrontZ) / 2;
+    const trayDepth = PRIZE_CHUTE.trayFrontZ - PRIZE_CHUTE.trayBackZ + .20;
+    const tray = box([1.8, .10, trayDepth],
+      [PRIZE_CHUTE.x, PRIZE_CHUTE.trayFloorY - .05, trayCenterZ], 0x20232a);
+    tray.name = 'PrizeTray';
+    for (const side of [-1, 1]) {
+      box([.06, .16, trayDepth], [PRIZE_CHUTE.x + side * .88, PRIZE_CHUTE.trayFloorY + .08, trayCenterZ], 0x692334);
     }
-    this.scene.traverse(o=>{if(o instanceof THREE.Mesh && o.userData.cyberShell)o.visible=false;});
-    // Keep the functional reference claw visible after hiding the decorative shell meshes.
-    rail.visible = true; carriage.visible = true; cable.visible = true; claw.traverse(o => { o.visible = true; });
+    box([1.8, .16, .06], [PRIZE_CHUTE.x, PRIZE_CHUTE.trayFloorY + .08, PRIZE_CHUTE.trayFrontZ + .03], 0x692334);
+    this.scene.traverse(object => { if (object.userData.cyberShell) object.visible = false; });
 
-    // Two tall neon tubes keep the rear wall readable against the purple fog.
+    // Two tall neon tubes frame the cabinet against the dark background.
     // They are added after the shell pass so they remain visible behind the
     // cabinet, with a soft translucent halo and a small colored point light.
     for (const [x, color] of [[-10.25, 0xff4fc3], [10.25, 0x4fc3ff]] as const) {
@@ -420,7 +417,7 @@ export class CyberGallery {
   }
 
   update(delta: number, time: number) {
-    const target = new THREE.Vector3(0, 5.4, 0);
+    const target = new THREE.Vector3(0, 7.0, 0);
     const horizontal = Math.cos(this.viewPitch) * this.viewDistance;
     this.camera.position.set(
       Math.sin(this.viewYaw) * horizontal,
@@ -564,16 +561,24 @@ export class CyberGallery {
       const dx = this.clawChute.x - this.clawX, dz = this.clawChute.y - this.clawZ;
       this.clawVx += THREE.MathUtils.clamp(dx * 6, -3, 3) * delta * 3;
       this.clawVz += THREE.MathUtils.clamp(dz * 6, -3, 3) * delta * 3;
-      if (Math.hypot(dx, dz) < 0.12 && this.clawStateTime > 0.5) { this.clawState = 'release'; this.clawStateTime = 0; this.clawOpenTarget = 1; }
+      const headDistance = Math.hypot(this.clawHeadPosition.x - this.clawChute.x, this.clawHeadPosition.z - this.clawChute.y);
+      if (Math.hypot(dx, dz) < 0.04 && headDistance < 0.06 && this.clawHeadVelocity.length() < 0.10 && this.clawStateTime > 0.5) {
+        this.clawState = 'release'; this.clawStateTime = 0; this.clawOpenTarget = 1;
+      }
     }
     this.clawVx *= Math.pow(0.0015, delta); this.clawVz *= Math.pow(0.0015, delta);
-    this.clawX = THREE.MathUtils.clamp(this.clawX + this.clawVx * delta, -2.15, 2.15);
-    this.clawZ = THREE.MathUtils.clamp(this.clawZ + this.clawVz * delta, -1.45, 1.45);
-    if (Math.abs(this.clawX) >= 2.14) this.clawVx = 0;
-    if (Math.abs(this.clawZ) >= 1.44) this.clawVz = 0;
-    if (this.clawState === 'down') { this.clawY = Math.max(0.55, this.clawY - 1.55 * delta); if (this.clawY <= 0.58) { this.clawState = 'grab'; this.clawStateTime = 0; } }
+    const envelope = this.clawModel?.bounds;
+    const minX = -MACHINE_LAYOUT.halfWidth - (envelope?.min.x ?? -.55) + .03;
+    const maxX = MACHINE_LAYOUT.halfWidth - (envelope?.max.x ?? .55) - .03;
+    const minZ = MACHINE_LAYOUT.backZ - (envelope?.min.z ?? -.55) + .03;
+    const maxZ = MACHINE_LAYOUT.frontZ - (envelope?.max.z ?? .55) - .03;
+    this.clawX = THREE.MathUtils.clamp(this.clawX + this.clawVx * delta, minX, maxX);
+    this.clawZ = THREE.MathUtils.clamp(this.clawZ + this.clawVz * delta, minZ, maxZ);
+    if (this.clawX <= minX + .01 || this.clawX >= maxX - .01) this.clawVx = 0;
+    if (this.clawZ <= minZ + .01 || this.clawZ >= maxZ - .01) this.clawVz = 0;
+    if (this.clawState === 'down') { this.clawY = Math.max(MACHINE_LAYOUT.clawBottomY, this.clawY - 1.55 * delta); if (this.clawY <= MACHINE_LAYOUT.clawBottomY + .01) { this.clawState = 'grab'; this.clawStateTime = 0; } }
     else if (this.clawState === 'grab') { this.clawOpenTarget = 0; if (this.clawStateTime > 0.8) { this.tryClawGrab(); this.clawState = 'up'; this.clawStateTime = 0; } }
-    else if (this.clawState === 'up') { this.clawY = Math.min(2.55, this.clawY + 1.9 * delta); if (this.clawY >= 2.5) { this.clawState = this.clawHeld ? 'return' : 'ready'; this.clawStateTime = 0; } }
+    else if (this.clawState === 'up') { this.clawY = Math.min(MACHINE_LAYOUT.clawTopY, this.clawY + 1.9 * delta); if (this.clawY >= MACHINE_LAYOUT.clawTopY) { this.clawState = this.clawHeld ? 'return' : 'ready'; this.clawStateTime = 0; } }
     else if (this.clawState === 'release') {
       if (this.clawHeld) {
         const delivered = this.clawHeld;
@@ -599,20 +604,43 @@ export class CyberGallery {
     this.clawHeadVelocity.x += ((this.clawX - this.clawHeadPosition.x) * 26 - this.clawHeadVelocity.x * 5.2) * delta;
     this.clawHeadVelocity.z += ((this.clawZ - this.clawHeadPosition.z) * 26 - this.clawHeadVelocity.z * 5.2) * delta;
     this.clawHeadPosition.x += this.clawHeadVelocity.x * delta; this.clawHeadPosition.z += this.clawHeadVelocity.z * delta; this.clawHeadPosition.y = this.clawY;
-    if (this.clawHead) this.clawHead.position.copy(this.clawHeadPosition);
-    if (this.clawCarriage) this.clawCarriage.position.set(this.clawX, 4.55, this.clawZ);
+    if (this.clawHead) {
+      this.clawHead.rotation.z = THREE.MathUtils.clamp(-this.clawHeadVelocity.x * .12, -.3, .3);
+      this.clawHead.rotation.x = THREE.MathUtils.clamp(this.clawHeadVelocity.z * .12, -.3, .3);
+      if (envelope) {
+        // The imported fingers are wider than the old procedural claw. Keep
+        // their full opening/swing envelope inside the glass and above the floor.
+        const bounds = envelope.clone().applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(this.clawHead.rotation));
+        const position = this.clawHeadPosition;
+        const x = THREE.MathUtils.clamp(position.x, -MACHINE_LAYOUT.halfWidth - bounds.min.x + .02, MACHINE_LAYOUT.halfWidth - bounds.max.x - .02);
+        const z = THREE.MathUtils.clamp(position.z, MACHINE_LAYOUT.backZ - bounds.min.z + .02, MACHINE_LAYOUT.frontZ - bounds.max.z - .02);
+        if (x !== position.x) this.clawHeadVelocity.x = 0;
+        if (z !== position.z) this.clawHeadVelocity.z = 0;
+        position.set(x, THREE.MathUtils.clamp(position.y,
+          MACHINE_LAYOUT.floorY - bounds.min.y + .02, MACHINE_LAYOUT.ceilingY - bounds.max.y - .02), z);
+      }
+      this.clawHead.position.copy(this.clawHeadPosition);
+    }
+    if (this.clawRail) this.clawRail.position.z = this.clawZ;
+    if (this.clawCarriage) this.clawCarriage.position.set(this.clawX, MACHINE_LAYOUT.railY, this.clawZ);
     if (this.clawCable) {
-      const top = new THREE.Vector3(this.clawX, 4.49, this.clawZ); const mid = top.clone().add(this.clawHeadPosition).multiplyScalar(.5); const len = top.distanceTo(this.clawHeadPosition);
+      const top = new THREE.Vector3(this.clawX, MACHINE_LAYOUT.railY - .075, this.clawZ); const mid = top.clone().add(this.clawHeadPosition).multiplyScalar(.5); const len = top.distanceTo(this.clawHeadPosition);
       this.clawCable.position.copy(mid); this.clawCable.scale.set(1, len, 1);
       const direction = this.clawHeadPosition.clone().sub(top).normalize();
       this.clawCable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
     }
-    if (this.clawHead) { this.clawHead.rotation.z = THREE.MathUtils.clamp(-this.clawHeadVelocity.x * .12, -.3, .3); this.clawHead.rotation.x = THREE.MathUtils.clamp(this.clawHeadVelocity.z * .12, -.3, .3); }
     this.clawOpen += (this.clawOpenTarget - this.clawOpen) * Math.min(1, delta * 6);
-    this.clawProngs.forEach(p => { p.seg1.rotation.z = THREE.MathUtils.lerp(.15, .95, this.clawOpen); p.seg2.rotation.z = THREE.MathUtils.lerp(-1.25, -.5, this.clawOpen); });
+    this.clawModel?.setOpen(this.clawOpen);
     if (this.clawHeld && this.clawState !== 'release') {
       const proxy = this.bodies.get(this.clawHeld);
-      if (proxy) { const wx = group.position.x + this.clawHeadPosition.x * group.scale.x; const wy = group.position.y + (this.clawHeadPosition.y - .65) * group.scale.y; const wz = group.position.z + this.clawHeadPosition.z * group.scale.z; proxy.body.position.set(wx, wy, wz); proxy.body.velocity.setZero(); this.clawHeld.position.set(wx, wy, wz); }
+      if (proxy) {
+        const grip = new THREE.Vector3(0, -MACHINE_LAYOUT.holdOffset, 0);
+        if (this.clawHead) grip.applyEuler(this.clawHead.rotation);
+        grip.add(this.clawHeadPosition).multiply(group.scale).add(group.position);
+        proxy.body.position.set(grip.x, grip.y, grip.z);
+        proxy.body.velocity.setZero();
+        this.clawHeld.position.copy(grip).sub(proxy.offset.clone().applyQuaternion(this.clawHeld.quaternion));
+      }
     }
   }
 
@@ -633,7 +661,8 @@ export class CyberGallery {
     let bestDistance = Infinity;
     const worldX = this.clawGroup.position.x + this.clawHeadPosition.x * this.clawGroup.scale.x;
     const worldZ = this.clawGroup.position.z + this.clawHeadPosition.z * this.clawGroup.scale.z;
-    this.bodies.forEach(({ body }, model) => { if (model.userData.cyberDragging || model.userData.cyberDock >= 0) return; const d = Math.hypot(body.position.x - worldX, body.position.z - worldZ); if (d < 1.0 && body.position.y < 5.0 && d < bestDistance) { bestDistance = d; bestModel = model; } });
+    const grabHeight = this.clawGroup.position.y + (MACHINE_LAYOUT.floorY + .85) * this.clawGroup.scale.y;
+    this.bodies.forEach(({ body }, model) => { if (model.userData.cyberDragging || model.userData.cyberDock >= 0) return; const d = Math.hypot(body.position.x - worldX, body.position.z - worldZ); if (d < .8 && body.position.y < grabHeight && d < bestDistance) { bestDistance = d; bestModel = model; } });
     if (bestModel) { this.clawHeld = bestModel; const proxy = this.bodies.get(bestModel)!; this.physics.hold(proxy.body); }
   }
 
@@ -687,6 +716,8 @@ export class CyberGallery {
     this.collectedPrizes.clear();
     this.clawPrizesOnTray = [];
     this.clawHeld = null;
+    this.clawModel = null;
+    this.machineReady = false;
     this.clawDeliveries = [];
     this.clearPrizePreview();
     this.prizePreviewScene.environment = null;

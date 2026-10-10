@@ -1,18 +1,8 @@
 import * as THREE from 'three';
 import { WORLD_GRAVITY } from './CyberPhysics';
+import { MACHINE_OUTLET, PRIZE_CHUTE } from './ClawMachineLayout';
+export { PRIZE_CHUTE } from './ClawMachineLayout';
 
-// Cabinet-local geometry shared by the visible chute and delivery contacts.
-export const PRIZE_CHUTE = {
-  x: -1.5,
-  entryZ: 0.95,
-  entryFloorY: -0.62,
-  outletZ: 2.68,
-  outletFloorY: -0.96,
-  trayFloorY: -1.14,
-  trayFrontZ: 3.75,
-  trayBackZ: 2.85,
-  halfWidth: 0.59,
-};
 const STEP = 1 / 120;
 const SLOPE = (PRIZE_CHUTE.outletFloorY - PRIZE_CHUTE.entryFloorY)
   / (PRIZE_CHUTE.outletZ - PRIZE_CHUTE.entryZ);
@@ -71,19 +61,25 @@ export class PrizeDelivery {
         }
       } else {
         const restY = PRIZE_CHUTE.trayFloorY + this.halfHeight;
-        if (p.y <= restY && v.y < 0) {
+        const overTray = p.z + this.radius >= PRIZE_CHUTE.trayBackZ
+          && p.z - this.radius <= PRIZE_CHUTE.trayFrontZ;
+        if (overTray && p.y <= restY && v.y < 0) {
           p.y = restY;
           v.y = Math.abs(v.y) > 0.25 ? -v.y * 0.18 : 0;
           const speed = Math.hypot(v.x, v.z);
           const friction = Math.max(0, speed - 0.65 * this.gravity * dt);
           if (speed > 0) { v.x *= friction / speed; v.z *= friction / speed; }
-          this.quietTime = v.lengthSq() < 0.0025 ? this.quietTime + dt : 0;
+          // A slow prize still passing through the door remains in delivery.
+          // Its entire visible geometry must clear the cabinet before the tray
+          // timer can start and eventually move the instance into the backpack.
+          const outsideCabinet = p.z - this.radius > MACHINE_OUTLET.frontZ;
+          this.quietTime = outsideCabinet && v.lengthSq() < 0.0025 ? this.quietTime + dt : 0;
           if (this.quietTime >= 0.15) { v.set(0, 0, 0); this.phase = 'settled'; }
         }
         // The tray lip catches remaining momentum with a small inelastic bounce.
         const front = PRIZE_CHUTE.trayFrontZ - this.radius;
         if (p.z > front) { p.z = front; v.z = -Math.abs(v.z) * 0.15; }
-        if (p.z < PRIZE_CHUTE.trayBackZ && p.y <= restY + 0.05) {
+        if (p.z < PRIZE_CHUTE.trayBackZ && p.y <= restY + 0.05 && v.z < 0) {
           p.z = PRIZE_CHUTE.trayBackZ; v.z = Math.abs(v.z) * 0.15;
         }
       }
