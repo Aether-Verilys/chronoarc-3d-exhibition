@@ -4,7 +4,7 @@ import { CyberPhysics } from './CyberPhysics';
 import { PrizeDelivery, PRIZE_CHUTE } from './PrizeDelivery';
 import { MACHINE_LAYOUT } from './ClawMachineLayout';
 import { createClawModel, type ClawModel } from './ClawModel';
-import { prepareCabinetModel } from './CabinetModel';
+import { addCabinetGlass, prepareCabinetModel } from './CabinetModel';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CollectedPrize, PRIZE_CATALOG } from '../types/prizes';
@@ -84,15 +84,14 @@ export class CyberGallery {
     // Pull back to frame the enlarged cabinet and its extended prize bay.
     this.camera.position.set(0, 8.2, 25);
     this.camera.lookAt(0, 5.4, 0);
-    // Replace the warm gallery mood with a dark gunmetal workshop shell.
-    // A compact studio environment supplies glass/metal reflections without
-    // distance fog obscuring the prizes and the lower collection outlet.
-    this.scene.background = new THREE.Color(0x241532);
+    // Lift the purple backdrop and ambient fill while keeping the neon contrast.
+    // Studio reflections need no fog around the prizes or collection outlet.
+    this.scene.background = new THREE.Color(0x403050);
     const pmrem = new THREE.PMREMGenerator(renderer);
     this.environment = pmrem.fromScene(new RoomEnvironment(), 0.04);
     pmrem.dispose();
     this.scene.environment = this.environment.texture;
-    this.scene.environmentIntensity = 0.18;
+    this.scene.environmentIntensity = 0.28;
     this.prizePreviewScene.environment = this.environment.texture;
     this.prizePreviewScene.environmentIntensity = 0.3;
 
@@ -245,7 +244,7 @@ export class CyberGallery {
       this.scene.traverse(object => {
         if (object instanceof THREE.Light) object.intensity *= 0.18;
       });
-      this.scene.add(new THREE.HemisphereLight(0x4c718c, 0x03060a, 0.8));
+      this.scene.add(new THREE.HemisphereLight(0x7890a8, 0x211729, 0.95));
       const key = new THREE.DirectionalLight(0xb9eaff, 1.7);
       key.position.set(-5, 10, 8);
       this.scene.add(key);
@@ -285,6 +284,11 @@ export class CyberGallery {
     const cabinet = prepareCabinetModel(machineSource);
     cabinet.traverse(object => {
       if (object instanceof THREE.Mesh) this.resources.add(object.geometry);
+    });
+    // Restore the reference's transparent panes in the imported shell's frame.
+    addCabinetGlass(cabinet).forEach(pane => {
+      this.resources.add(pane.geometry);
+      if (pane.material instanceof THREE.Material) this.resources.add(pane.material);
     });
     this.clawGroup.add(cabinet);
     this.clawModel = createClawModel(clawSource, MACHINE_LAYOUT.clawHeight);

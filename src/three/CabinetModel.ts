@@ -1,6 +1,60 @@
 import * as THREE from 'three';
 import { MACHINE_MODEL } from './ClawMachineLayout';
 
+// Pane bounds are measured in the GLB's native space so they follow both the
+// cabinet scale and the gallery scale. The imported shell has no glass surface.
+const GLASS = {
+  // The front pane follows the inner window frame. The cabinet's maximum Z
+  // belongs to the joystick housing, so it is not a valid front-glass plane.
+  frontCenterX: -0.00293,
+  frontWidth: 0.4352,
+  frontZ: 0.192,
+  frontBottomY: 0.4412,
+  frontTopY: 0.8926,
+  halfWidth: 0.2507,
+  sideZ: 0.1702,
+  bottomY: 0.4326 + 0.008,
+  topY: 0.8955 - 0.012,
+};
+
+/** Add the three transparent panes used by the original claw-machine shell. */
+export function addCabinetGlass(root: THREE.Group): THREE.Mesh[] {
+  const material = new THREE.MeshPhysicalMaterial({
+    color: 0xdff0ff,
+    transparent: true,
+    opacity: 0.12,
+    roughness: 0.08,
+    metalness: 0,
+    clearcoat: 0.4,
+    clearcoatRoughness: 0.15,
+    envMapIntensity: 0.35,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const sideHeight = GLASS.topY - GLASS.bottomY;
+  const sideCenterY = (GLASS.topY + GLASS.bottomY) / 2;
+  const frontHeight = GLASS.frontTopY - GLASS.frontBottomY;
+  const frontCenterY = (GLASS.frontTopY + GLASS.frontBottomY) / 2;
+  const panes: THREE.Mesh[] = [];
+  const addPane = (width: number, height: number, x: number, y: number, z: number, rotationY = 0, name: string) => {
+    const pane = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
+    pane.name = name;
+    pane.position.set(x, y, z);
+    pane.rotation.y = rotationY;
+    pane.renderOrder = 8;
+    pane.castShadow = false;
+    pane.receiveShadow = false;
+    pane.userData.clawGlass = true;
+    root.add(pane);
+    panes.push(pane);
+  };
+  // The front pane overlaps the inner frame by .002 to avoid edge gaps.
+  addPane(GLASS.frontWidth, frontHeight, GLASS.frontCenterX, frontCenterY, GLASS.frontZ, 0, 'CabinetGlassFront');
+  addPane(GLASS.sideZ * 2 - 0.018, sideHeight, -GLASS.halfWidth - 0.002, sideCenterY, 0, Math.PI / 2, 'CabinetGlassLeft');
+  addPane(GLASS.sideZ * 2 - 0.018, sideHeight, GLASS.halfWidth + 0.002, sideCenterY, 0, Math.PI / 2, 'CabinetGlassRight');
+  return panes;
+}
+
 /** Native-space openings in the imported cabinet mesh. */
 const OPENINGS = [
   { min: [-0.18, 0.40, 0.003] as const, max: [-0.046, 0.46, 0.137] as const },

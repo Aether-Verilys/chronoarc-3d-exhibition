@@ -342,6 +342,12 @@ export default function App() {
         modelCount={models.length}
       />
 
+      {isCyberEnabled && !selectedPrize && (
+        <p className="pointer-events-none fixed top-20 left-5 z-30 select-none rounded-lg border border-slate-600/40 bg-slate-950/70 px-3 py-2 text-xs tracking-wide text-slate-200 backdrop-blur-md">
+          WASD 移动 · 空格 抓取
+        </p>
+      )}
+
       {isCyberEnabled && <button type="button" onClick={() => setIsBackpackOpen(true)} aria-label={`打开背包，已有 ${collectedPrizes.length} 件奖品`} className={`fixed top-20 right-5 z-30 flex items-center gap-2 rounded-xl border border-amber-300/50 bg-slate-950/80 px-3 py-2 text-sm font-semibold text-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.15)] backdrop-blur-xl hover:bg-amber-400/15 ${backpackPulse ? 'animate-bounce ring-2 ring-amber-300' : ''}`}>
         <Backpack className="h-4 w-4" /> 背包 <span className="rounded-full bg-amber-400/20 px-1.5 text-xs text-amber-100">{collectedPrizes.length}</span>
       </button>}
