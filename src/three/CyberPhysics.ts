@@ -1,5 +1,5 @@
 import * as CANNON from 'cannon-es';
-import { MACHINE_LAYOUT } from './ClawMachineLayout';
+import { CHUTE_GUARD, MACHINE_LAYOUT } from './ClawMachineLayout';
 
 export const WORLD_GRAVITY = 9.8;
 
@@ -26,6 +26,12 @@ export class CyberPhysics {
     this.box([0.12, height, depth], [width / 2 + 0.06, this.floorY + height / 2, centerZ]);
     this.box([width, height, 0.12], [0, this.floorY + height / 2, MACHINE_LAYOUT.backZ * scale - 0.06]);
     this.box([width, height, 0.12], [0, this.floorY + height / 2, MACHINE_LAYOUT.frontZ * scale + 0.06]);
+    for (const wall of CHUTE_GUARD.walls) {
+      this.box(
+        wall.size.map(value => value * scale),
+        [wall.position[0] * scale, MACHINE_LAYOUT.worldY + wall.position[1] * scale, wall.position[2] * scale],
+      );
+    }
   }
 
   private box(size: number[], position: number[]) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as THREE from 'three';
 import { PrizeDelivery } from '../src/three/PrizeDelivery';
-import { MACHINE_LAYOUT, MACHINE_OUTLET, PRIZE_CHUTE } from '../src/three/ClawMachineLayout';
+import { CHUTE_GUARD, MACHINE_LAYOUT, MACHINE_OUTLET, PRIZE_CHUTE } from '../src/three/ClawMachineLayout';
 
 const INITIAL_POSITION = new THREE.Vector3(MACHINE_LAYOUT.chuteX,
   MACHINE_LAYOUT.clawTopY - MACHINE_LAYOUT.holdOffset, MACHINE_LAYOUT.chuteZ);
@@ -145,6 +145,42 @@ test('prizes of different shapes emerge through the measured left door before se
       assert.equal(motion.phase, 'settled');
       assert.ok(motion.position.z - radius > MACHINE_OUTLET.frontZ,
         'a prize cannot settle for collection while still inside the cabinet');
+    }
+  }
+});
+
+test('a drifting prize clears all four chute guards and still reaches the collection tray', () => {
+  const radius = 0.45;
+  const halfHeight = 0.27;
+  for (const xDirection of [-1, 1]) {
+    for (const zDirection of [-1, 1]) {
+      const start = INITIAL_POSITION.clone().add(new THREE.Vector3(xDirection * 0.025, 0, zDirection * 0.025));
+      const motion = new PrizeDelivery(start, new THREE.Vector3(xDirection * 0.03, 0, zDirection * 0.03),
+        halfHeight, radius, WORLD_SCALE);
+      let crossedGuardHeight = false;
+      let hitSide = false;
+      let passedFrontGuard = false;
+      for (let frame = 0; frame < 120 * 8 && motion.phase !== 'settled'; frame += 1) {
+        const previous = motion.position.clone();
+        motion.advance(1 / 120);
+        const p = motion.position;
+        assert.ok(p.distanceTo(previous) < 0.065, 'guard contact keeps the delivered prize moving continuously');
+        if (p.y - halfHeight < CHUTE_GUARD.topY && p.y + halfHeight > CHUTE_GUARD.floorY) {
+          crossedGuardHeight = true;
+          assert.ok(p.x - radius >= CHUTE_GUARD.minX - 1e-9, 'the prize clears the left guard');
+          assert.ok(p.x + radius <= CHUTE_GUARD.maxX + 1e-9, 'the prize clears the right guard');
+          assert.ok(p.z - radius >= CHUTE_GUARD.minZ - 1e-9, 'the prize clears the rear guard');
+          assert.ok(p.z + radius <= CHUTE_GUARD.maxZ + 1e-9, 'the prize clears the front guard');
+          hitSide ||= motion.velocity.x * xDirection < 0 || motion.velocity.z * zDirection < 0;
+        }
+        passedFrontGuard ||= p.z - radius > CHUTE_GUARD.maxZ;
+      }
+      assert.ok(crossedGuardHeight, 'the falling prize passes through the guarded opening');
+      assert.ok(hitSide, 'the trajectory exercises a guard contact rather than an untouched central fall');
+      assert.ok(passedFrontGuard, 'the guard stops constraining forward travel once the prize is below the playfield');
+      assert.equal(motion.phase, 'settled', 'guard contacts preserve the complete delivery lifecycle');
+      assert.ok(motion.position.z - radius > MACHINE_OUTLET.frontZ,
+        'the full prize emerges through the original outlet before settling');
     }
   }
 });

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WORLD_GRAVITY } from './CyberPhysics';
-import { MACHINE_OUTLET, PRIZE_CHUTE } from './ClawMachineLayout';
+import { CHUTE_GUARD, MACHINE_OUTLET, PRIZE_CHUTE } from './ClawMachineLayout';
 export { PRIZE_CHUTE } from './ClawMachineLayout';
 
 const STEP = 1 / 120;
@@ -51,6 +51,14 @@ export class PrizeDelivery {
       p.y -= 0.5 * this.gravity * dt * dt;
       v.y -= this.gravity * dt;
       if (this.phase === 'fall') {
+        // The open top admits a caught prize; the sides absorb its remaining
+        // swing until it has fallen below the playfield and into the ramp.
+        if (p.y - this.halfHeight <= CHUTE_GUARD.topY && p.y + this.halfHeight >= CHUTE_GUARD.floorY) {
+          const x = THREE.MathUtils.clamp(p.x, CHUTE_GUARD.minX + this.radius, CHUTE_GUARD.maxX - this.radius);
+          const z = THREE.MathUtils.clamp(p.z, CHUTE_GUARD.minZ + this.radius, CHUTE_GUARD.maxZ - this.radius);
+          if (x !== p.x) { p.x = x; v.x *= -0.15; }
+          if (z !== p.z) { p.z = z; v.z *= -0.15; }
+        }
         const floorY = PRIZE_CHUTE.entryFloorY + SLOPE * (p.z - PRIZE_CHUTE.entryZ);
         if (p.y - this.halfHeight <= floorY) {
           p.y = floorY + this.halfHeight;

@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import type { Body } from 'cannon-es';
 import { CyberPhysics } from './CyberPhysics';
 import { PrizeDelivery, PRIZE_CHUTE } from './PrizeDelivery';
-import { MACHINE_LAYOUT } from './ClawMachineLayout';
+import { CHUTE_GUARD, createPrizeSpawnLayout, MACHINE_LAYOUT } from './ClawMachineLayout';
 import { createClawModel, type ClawModel } from './ClawModel';
+import { createChuteGuard } from './ChuteGuard';
+import { createNeonLightModel } from './NeonLightModel';
 import { addCabinetGlass, prepareCabinetModel } from './CabinetModel';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -210,35 +212,35 @@ export class CyberGallery {
     // Load only prize models owned by this room. The balcony room is entirely
     // independent and is never constructed or retained here.
     this.setupClawMachine();
-    this.ready = Promise.all([this.loadPrizeModels(), this.loadMachineModels()]).then(() => {});
+    this.ready = Promise.all([this.loadPrizeModels(), this.loadMachineModels(), this.loadNeonLights()]).then(() => {});
     void this.ready.then(() => {
       if (this.physicsDisposed) return;
-      // Prizes settle inside the imported cabinet before play begins.
-      this.interactive.children.forEach((model, index) => {
-        const col = index % 6;
-        const row = Math.floor(index / 6);
-        // World-space birth points stay safely inside the doubled glass box.
-        const scale = MACHINE_LAYOUT.worldScale;
-        const floorY = MACHINE_LAYOUT.worldY + MACHINE_LAYOUT.floorY * scale;
-        model.position.set(-2.45 + col * .98, floorY + 2.0 + row * 1.12, -1.7 + row * 1.45);
-        // Cyber-space display convention: every artifact faces screen-right.
-        model.rotation.set(0, -Math.PI / 2, 0);
-        model.userData.baseY = model.position.y;
+      // Measure proxies before random rotation: a rotated AABB would artificially
+      // enlarge the sphere, even though the prize itself has not changed size.
+      const prizes = this.interactive.children.map(model => {
+        model.updateWorldMatrix(true, true);
+        const bounds = new THREE.Box3().setFromObject(model);
+        const size = bounds.getSize(new THREE.Vector3());
+        return {
+          model,
+          radius: Math.max(0.12, Math.max(size.x, size.y, size.z) * 0.5),
+          offset: bounds.getCenter(new THREE.Vector3()).sub(model.position),
+        };
+      });
+      const spawns = createPrizeSpawnLayout(prizes.map(prize => prize.radius));
+      prizes.forEach(({ model, radius, offset }, index) => {
+        const spawn = spawns[index];
+        model.rotation.set(0, spawn.yaw, 0);
         model.userData.cyberDock = -1;
         model.userData.spin = 0;
         model.userData.bounce = 0;
-        model.updateWorldMatrix(true, true);
-        const bounds = new THREE.Box3().setFromObject(model);
-        const center = bounds.getCenter(new THREE.Vector3());
-        const size = bounds.getSize(new THREE.Vector3());
-        const radius = Math.max(size.x, size.y, size.z) * 0.5;
-        const body = this.physics.sphere(Math.max(0.12, radius));
-        body.position.set(center.x, center.y, center.z);
+        model.position.set(spawn.x, spawn.y, spawn.z).sub(offset.clone().applyQuaternion(model.quaternion));
+        model.userData.baseY = model.position.y;
+        const body = this.physics.sphere(radius);
+        body.position.set(spawn.x, spawn.y, spawn.z);
         body.quaternion.set(model.quaternion.x, model.quaternion.y, model.quaternion.z, model.quaternion.w);
-        // Slight lateral momentum becomes rolling through contact friction;
-        // no artificial spin is applied while the model is airborne.
-        body.velocity.set(Math.sin(index * 2.4) * 0.85, 0, 0.5 + (index % 3) * 0.15);
-        const offset = center.sub(model.position).applyQuaternion(model.quaternion.clone().invert());
+        body.velocity.set(...spawn.velocity);
+        body.angularVelocity.set(...spawn.angularVelocity);
         this.bodies.set(model, { body, offset });
       });
       this.scene.traverse(object => {
@@ -327,6 +329,16 @@ export class CyberGallery {
     return loading;
   }
 
+  private async loadNeonLights() {
+    const source = await this.loadAsset('claw-machine/neon-light');
+    if (this.disposed) return;
+    for (const [x, color] of [[-10.25, 0xff4fc3], [10.25, 0x4fc3ff]] as const) {
+      const lamp = createNeonLightModel(source, color);
+      lamp.position.set(x, 6.6, -4.6);
+      this.scene.add(lamp);
+    }
+  }
+
   private setupClawMachine() {
     const group = this.clawGroup;
     group.name = 'ClawMachine';
@@ -342,7 +354,7 @@ export class CyberGallery {
       return mesh;
     };
 
-    // Only the moving gantry and delivery surfaces are procedural. The cabinet,
+    // The moving gantry, chute guard and delivery surfaces are procedural. The cabinet,
     // controls, signage and five-finger claw come from the supplied GLBs.
     const rail = box([MACHINE_LAYOUT.halfWidth * 2, .08, .10], [0, MACHINE_LAYOUT.railY, 0], 0x78818b);
     rail.name = 'ClawRail';
@@ -364,6 +376,7 @@ export class CyberGallery {
     this.clawHead.position.copy(this.clawHeadPosition);
     group.add(this.clawHead);
 
+    group.add(createChuteGuard());
     const chuteLight = new THREE.PointLight(0xffb52e, 2.8, 2.6, 2);
     chuteLight.position.set(this.clawChute.x, MACHINE_LAYOUT.floorY + .12, this.clawChute.y);
     group.add(chuteLight);
@@ -385,25 +398,9 @@ export class CyberGallery {
     box([1.8, .16, .06], [PRIZE_CHUTE.x, PRIZE_CHUTE.trayFloorY + .08, PRIZE_CHUTE.trayFrontZ + .03], 0x692334);
     this.scene.traverse(object => { if (object.userData.cyberShell) object.visible = false; });
 
-    // Two tall neon tubes frame the cabinet against the dark background.
-    // They are added after the shell pass so they remain visible behind the
-    // cabinet, with a soft translucent halo and a small colored point light.
+    // The imported fixtures provide the visible geometry and emissive glow.
+    // These lights cast their pink/blue spill onto the cabinet.
     for (const [x, color] of [[-10.25, 0xff4fc3], [10.25, 0x4fc3ff]] as const) {
-      const haloMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
-      const halo = new THREE.Mesh(new THREE.BoxGeometry(1.15, 13.6, 0.12), haloMaterial);
-      halo.position.set(x, 6.2, -4.62);
-      this.resources.add(halo.geometry); this.resources.add(haloMaterial);
-      this.scene.add(halo);
-      const coreMaterial = new THREE.MeshBasicMaterial({ color, toneMapped: false, fog: false, blending: THREE.AdditiveBlending });
-      const core = new THREE.Mesh(new THREE.BoxGeometry(0.28, 13.2, 0.14), coreMaterial);
-      core.position.set(x, 6.2, -4.68);
-      this.resources.add(core.geometry); this.resources.add(coreMaterial);
-      this.scene.add(core);
-      const hotMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.78, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
-      const hot = new THREE.Mesh(new THREE.BoxGeometry(0.075, 12.9, 0.16), hotMaterial);
-      hot.position.set(x, 6.2, -4.76);
-      this.resources.add(hot.geometry); this.resources.add(hotMaterial);
-      this.scene.add(hot);
       const glow = new THREE.PointLight(color, 42, 17, 2);
       glow.position.set(x, 6.2, -3.9);
       this.scene.add(glow);
@@ -535,6 +532,15 @@ export class CyberGallery {
     this.prizePreviewMode = false;
   }
 
+  private clawFloorAt(position: THREE.Vector3, bounds: THREE.Box3): number {
+    const overlapsGuard = CHUTE_GUARD.walls.some(wall =>
+      position.x + bounds.max.x > wall.position[0] - wall.size[0] / 2
+      && position.x + bounds.min.x < wall.position[0] + wall.size[0] / 2
+      && position.z + bounds.max.z > wall.position[2] - wall.size[2] / 2
+      && position.z + bounds.min.z < wall.position[2] + wall.size[2] / 2);
+    return overlapsGuard ? CHUTE_GUARD.topY : MACHINE_LAYOUT.floorY;
+  }
+
   private updateClaw(delta: number) {
     const group = this.clawGroup;
     this.clawStateTime += delta;
@@ -580,7 +586,19 @@ export class CyberGallery {
     this.clawZ = THREE.MathUtils.clamp(this.clawZ + this.clawVz * delta, minZ, maxZ);
     if (this.clawX <= minX + .01 || this.clawX >= maxX - .01) this.clawVx = 0;
     if (this.clawZ <= minZ + .01 || this.clawZ >= maxZ - .01) this.clawVz = 0;
-    if (this.clawState === 'down') { this.clawY = Math.max(MACHINE_LAYOUT.clawBottomY, this.clawY - 1.55 * delta); if (this.clawY <= MACHINE_LAYOUT.clawBottomY + .01) { this.clawState = 'grab'; this.clawStateTime = 0; } }
+    if (this.clawState === 'down') {
+      const bounds = envelope?.clone() ?? new THREE.Box3(
+        new THREE.Vector3(-.55, -MACHINE_LAYOUT.clawHeight, -.55), new THREE.Vector3(.55, 0, .55));
+      if (this.clawHead) bounds.applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(this.clawHead.rotation));
+      const floor = this.clawFloorAt(this.clawHeadPosition, bounds);
+      const bottom = Math.max(MACHINE_LAYOUT.clawBottomY, floor - bounds.min.y + .02);
+      this.clawY = Math.max(bottom, this.clawY - 1.55 * delta);
+      if (this.clawY <= bottom + .01) {
+        // A blocked descent returns empty instead of grabbing through the guard.
+        this.clawState = floor > MACHINE_LAYOUT.floorY ? 'up' : 'grab';
+        this.clawStateTime = 0;
+      }
+    }
     else if (this.clawState === 'grab') { this.clawOpenTarget = 0; if (this.clawStateTime > 0.8) { this.tryClawGrab(); this.clawState = 'up'; this.clawStateTime = 0; } }
     else if (this.clawState === 'up') { this.clawY = Math.min(MACHINE_LAYOUT.clawTopY, this.clawY + 1.9 * delta); if (this.clawY >= MACHINE_LAYOUT.clawTopY) { this.clawState = this.clawHeld ? 'return' : 'ready'; this.clawStateTime = 0; } }
     else if (this.clawState === 'release') {
@@ -620,8 +638,11 @@ export class CyberGallery {
         const z = THREE.MathUtils.clamp(position.z, MACHINE_LAYOUT.backZ - bounds.min.z + .02, MACHINE_LAYOUT.frontZ - bounds.max.z - .02);
         if (x !== position.x) this.clawHeadVelocity.x = 0;
         if (z !== position.z) this.clawHeadVelocity.z = 0;
-        position.set(x, THREE.MathUtils.clamp(position.y,
-          MACHINE_LAYOUT.floorY - bounds.min.y + .02, MACHINE_LAYOUT.ceilingY - bounds.max.y - .02), z);
+        position.x = x;
+        position.z = z;
+        position.y = THREE.MathUtils.clamp(position.y,
+          this.clawFloorAt(position, bounds) - bounds.min.y + .02,
+          MACHINE_LAYOUT.ceilingY - bounds.max.y - .02);
       }
       this.clawHead.position.copy(this.clawHeadPosition);
     }

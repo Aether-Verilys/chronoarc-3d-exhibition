@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createClawModel } from '../src/three/ClawModel';
 import { CyberGallery } from '../src/three/CyberGallery';
-import { MACHINE_LAYOUT } from '../src/three/ClawMachineLayout';
+import { CHUTE_GUARD, MACHINE_LAYOUT } from '../src/three/ClawMachineLayout';
 
 // Keep the real asset's node transforms and binary geometry. Textures are not
 // needed to test the rig, so omit their material references for Node's loader.
@@ -137,7 +137,7 @@ test('cached mounting-point bounds contain every pose, including between sampled
   assert.ok(bounds.equals(originalBounds), 'moving the claw does not change mounting-point bounds');
 });
 
-test('CyberGallery keeps the real claw inside the glass cabinet at movement edges and during descent', async () => {
+test('CyberGallery keeps the real claw inside the glass and clear of chute guards during descent', async () => {
   const source = await loadClaw();
   const clawModel = createClawModel(source, MACHINE_LAYOUT.clawHeight);
   const group = new THREE.Group();
@@ -193,6 +193,9 @@ test('CyberGallery keeps the real claw inside the glass cabinet at movement edge
     ),
   );
   const interiorWorld = interior.clone().applyMatrix4(group.matrixWorld);
+  const guardWalls = CHUTE_GUARD.walls.map(wall => new THREE.Box3()
+    .setFromCenterAndSize(new THREE.Vector3(...wall.position), new THREE.Vector3(...wall.size))
+    .applyMatrix4(group.matrixWorld));
   let minimumOpening = 1;
   let lowestTip = Infinity;
   let largestTilt = 0;
@@ -205,6 +208,9 @@ test('CyberGallery keeps the real claw inside the glass cabinet at movement edge
     assert.ok(actual.max.y <= interiorWorld.max.y + 1e-5, `${label}: ceiling`);
     assert.ok(actual.min.z >= interiorWorld.min.z - 1e-5, `${label}: back wall`);
     assert.ok(actual.max.z <= interiorWorld.max.z + 1e-5, `${label}: front wall`);
+    for (const [index, wall] of guardWalls.entries()) {
+      assert.equal(actual.intersectsBox(wall), false, `${label}: claw geometry clears chute guard ${index}`);
+    }
     minimumOpening = Math.min(minimumOpening, gallery['clawOpen']);
     lowestTip = Math.min(lowestTip, actual.min.y);
     largestTilt = Math.max(largestTilt, Math.abs(head.rotation.x), Math.abs(head.rotation.z));
@@ -237,4 +243,45 @@ test('CyberGallery keeps the real claw inside the glass cabinet at movement edge
   assert.ok(minimumOpening < 0.01, 'the movement check includes the nearly closed geometry');
   assert.ok(lowestTip < interiorWorld.min.y + 0.15, 'the claw reaches close to the floor');
   assert.ok(largestTilt > 0.05, 'the movement check includes inertial swing');
+
+  let grabAttempts = 0;
+  let collectionAttempts = 0;
+  (gallery as any).tryClawGrab = () => { grabAttempts += 1; };
+  (gallery as any).collectDeliveredPrize = () => { collectionAttempts += 1; };
+  for (const [name, x, z] of [
+    ['opening', MACHINE_LAYOUT.chuteX, MACHINE_LAYOUT.chuteZ],
+    ['left guard', CHUTE_GUARD.minX, MACHINE_LAYOUT.chuteZ],
+    ['right guard', CHUTE_GUARD.maxX, MACHINE_LAYOUT.chuteZ],
+    ['rear guard', MACHINE_LAYOUT.chuteX, CHUTE_GUARD.minZ],
+    ['front guard', MACHINE_LAYOUT.chuteX, CHUTE_GUARD.maxZ],
+  ] as const) {
+    gallery['clawX'] = x;
+    gallery['clawZ'] = z;
+    gallery['clawY'] = MACHINE_LAYOUT.clawTopY;
+    gallery['clawVx'] = 0;
+    gallery['clawVz'] = 0;
+    gallery['clawHeadPosition'].set(x, MACHINE_LAYOUT.clawTopY, z);
+    gallery['clawHeadVelocity'].set(0, 0, 0);
+    gallery['clawState'] = 'down';
+    gallery['clawStateTime'] = 0;
+    gallery['clawOpen'] = 1;
+    gallery['clawOpenTarget'] = 1;
+    let descended = false;
+    let raised = false;
+    for (let frame = 0; frame < 4 * 120; frame += 1) {
+      (gallery as any).updateClaw(1 / 120);
+      assertInside(`${name}-blocked-descent`);
+      descended ||= gallery['clawHeadPosition'].y < MACHINE_LAYOUT.clawTopY - 0.1;
+      raised ||= String(gallery['clawState']) === 'up';
+      assert.notEqual(gallery['clawState'], 'grab', `${name}: blocked descent cannot grab through a guard`);
+    }
+    assert.ok(descended, `${name}: the claw lowers toward the guard`);
+    assert.ok(raised, `${name}: the guard aborts the descent and raises the claw`);
+    assert.equal(gallery['clawState'], 'ready', `${name}: the blocked cycle finishes`);
+    assert.equal(grabAttempts, 0, `${name}: a raised claw cannot remotely pick up a floor prize`);
+    assert.equal(collectionAttempts, 0, `${name}: a blocked cycle cannot collect a prize`);
+    assert.equal(gallery['clawHeld'], null);
+    assert.equal(gallery['clawDeliveries'].length, 0);
+    assert.equal(gallery['clawPrizesOnTray'].length, 0);
+  }
 });
