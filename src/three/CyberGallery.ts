@@ -402,7 +402,9 @@ export class CyberGallery {
     // These lights cast their pink/blue spill onto the cabinet.
     for (const [x, color] of [[-10.25, 0xff4fc3], [10.25, 0x4fc3ff]] as const) {
       const glow = new THREE.PointLight(color, 42, 17, 2);
-      glow.position.set(x, 6.2, -3.9);
+      // Keep the source inside its diffuser instead of almost touching the
+      // front surface, which produces a tiny, intensely white hotspot.
+      glow.position.set(x, 6.2, -4.6);
       this.scene.add(glow);
     }
     this.scene.add(new THREE.HemisphereLight(0xffd9ec, 0x2a1a3a, 0.7));

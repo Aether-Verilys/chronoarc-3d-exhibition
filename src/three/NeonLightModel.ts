@@ -16,24 +16,32 @@ export function createNeonLightModel(source: THREE.Group, color: number): THREE.
       const material = sourceMaterial.clone();
       if (material instanceof THREE.MeshStandardMaterial && material.map) {
         material.emissive.setHex(color);
-        material.emissiveIntensity = 0.95;
+        material.emissiveIntensity = 0.65;
         material.envMapIntensity = 1.5;
         material.emissiveMap = material.map;
-        // The generated texture separates white opal from dark metal. Restrict
-        // emission to the neutral, bright diffuser so the housing stays detailed.
+        // Tint only the opal diffuser: its original white surface plus emission
+        // otherwise clips to white when the scene's additive bloom is applied.
         material.onBeforeCompile = shader => {
-          shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `
-            #ifdef USE_EMISSIVEMAP
-              vec3 lampSurface = texture2D(emissiveMap, vEmissiveMapUv).rgb;
+          shader.uniforms.lampTint = { value: new THREE.Color(color) };
+          shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', '#include <common>\nuniform vec3 lampTint;')
+            .replace('#include <map_fragment>', `
+              #include <map_fragment>
+              vec3 lampSurface = diffuseColor.rgb;
               float lampMin = min(lampSurface.r, min(lampSurface.g, lampSurface.b));
               float lampMax = max(lampSurface.r, max(lampSurface.g, lampSurface.b));
               float diffuser = smoothstep(0.14, 0.3, lampMin)
                 * (1.0 - smoothstep(0.2, 0.45, lampMax - lampMin));
+              diffuseColor.rgb *= mix(vec3(1.0), lampTint * 0.65, diffuser * 0.9);
+            `)
+            .replace('#include <emissivemap_fragment>', `
+              // Frosted opal should not pick up a sharp white point-light glare.
+              roughnessFactor = max(roughnessFactor, diffuser * 0.82);
+              metalnessFactor *= 1.0 - diffuser;
               totalEmissiveRadiance *= diffuser;
-            #endif
-          `);
+            `);
         };
-        material.customProgramCacheKey = () => 'tripo-neon-diffuser-v1';
+        material.customProgramCacheKey = () => 'tripo-neon-diffuser-v2';
       }
       return material;
     };
@@ -42,7 +50,7 @@ export function createNeonLightModel(source: THREE.Group, color: number): THREE.
   });
   const root = new THREE.Group();
   // Narrow the generated housing to keep the pair subordinate to the cabinet.
-  root.scale.set(0.42, 1, 0.42);
+  root.scale.set(0.32, 1, 0.32);
   root.add(model);
   return root;
 }
